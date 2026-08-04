@@ -78,9 +78,13 @@ import (
 )
 
 const (
-	providerName  = "workbuddy"
-	authFileName  = "workbuddy.json"
-	pluginLogoURL = "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png"
+	providerName = "workbuddy"
+	// pluginDisplayName is the human-facing name surfaced in the management
+	// UI and plugin store. It is intentionally different from providerName
+	// (the internal identifier) so auth files / management routes stay stable.
+	pluginDisplayName = "WorkBuddy Enterprise"
+	authFileName      = "workbuddy.json"
+	pluginLogoURL     = "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png"
 	// CN chat/auth gateway (iss = codebuddy.cn realm).
 	upstreamBaseCN = "https://copilot.tencent.com"
 	// Global chat/auth gateway (iss = workbuddy.ai realm). APISIX on
@@ -341,7 +345,7 @@ func wbRegistration() registration {
 	return registration{
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
-			Name:             providerName,
+			Name:             pluginDisplayName,
 			Version:          version,
 			Author:           "hurleychin",
 			GitHubRepository: "https://github.com/hurleychin/cpa-plugin",

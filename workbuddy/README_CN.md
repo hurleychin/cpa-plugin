@@ -1,4 +1,4 @@
-# WorkBuddy 插件（CLIProxyAPI）
+# WorkBuddy Enterprise 插件（CLIProxyAPI）
 
 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) 的 **腾讯 CodeBuddy 企业版**
 （国内版 `copilot.tencent.com` + 国际版 `workbuddy.ai`）原生 OAuth 提供商插件：
@@ -60,7 +60,7 @@ plugins:
 
 ### 3. 登录
 
-从 CPA 侧边栏打开 WorkBuddy 面板（或直接访问
+从 CPA 侧边栏打开 WorkBuddy Enterprise 面板（或直接访问
 `/v0/resource/plugins/workbuddy/panel`），点 **登录** 走 OAuth 流程。
 每个账号登录一次，插件会把 `workbuddy-<uid>.json` 写入 auth store。
 

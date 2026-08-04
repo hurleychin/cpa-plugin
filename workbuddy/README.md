@@ -1,4 +1,4 @@
-# WorkBuddy Plugin for CLIProxyAPI
+# WorkBuddy Enterprise Plugin for CLIProxyAPI
 
 A [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) plugin that
 provides **Tencent CodeBuddy 企业版** (`copilot.tencent.com` CN and
@@ -68,7 +68,7 @@ plugins:
 
 ### 3. Sign in
 
-Open the WorkBuddy panel from CPA's sidebar (or hit
+Open the WorkBuddy Enterprise panel from CPA's sidebar (or hit
 `/v0/resource/plugins/workbuddy/panel` directly) and click **登录** to start
 the OAuth flow. Repeat for each account you want to add — the plugin writes
 one `workbuddy-<uid>.json` per account to the auth store.

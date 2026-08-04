@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WorkBuddy 面板</title>
+<title>WorkBuddy Enterprise 面板</title>
 <style>
 /* Theme tokens aligned with CPA management panel (key-policy / themes.scss):
    default :root = light (paper); data-theme=white | dark; embedded iframe syncs parent. */
@@ -171,7 +171,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 </head>
 <body>
 <div class="wrap">
-  <h1>WorkBuddy 账号面板</h1>
+  <h1>WorkBuddy Enterprise 账号面板</h1>
   <div class="sub">企业版额度 · 按月结算周期 · 耗尽自动关/删</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
@@ -592,9 +592,9 @@ async function load(force, btn){
     activeAuthId=d.active_auth||"";
     updateFilterCounts(accounts);
     if(!accounts.length){
-      g.innerHTML='<div class="loading">暂无 WorkBuddy 账号</div>';
+      g.innerHTML='<div class="loading">暂无 WorkBuddy Enterprise 账号</div>';
       renderSummary([]);
-      if(force) toast("数据已刷新", "warn", "暂无 WorkBuddy 账号");
+      if(force) toast("数据已刷新", "warn", "暂无 WorkBuddy Enterprise 账号");
       return;
     }
     g.innerHTML=accounts.map(card).join("");

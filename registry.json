@@ -3,7 +3,7 @@
   "plugins": [
     {
       "id": "workbuddy",
-      "name": "WorkBuddy",
+      "name": "WorkBuddy Enterprise",
       "description": "Tencent CodeBuddy (WorkBuddy) OAuth provider for CLIProxyAPI: multi-account login, dynamic models, chat executor, enterprise (企业版) usage quota query with monthly cycle, credit lifecycle (disable CN / delete Global when quota exhausted), credits panel with CN/Global filters, optional credits-aware scheduler.",
       "author": "hurleychin",
       "version": "0.8.7",
