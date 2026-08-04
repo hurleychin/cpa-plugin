@@ -16,7 +16,7 @@
   和非流式（SSE 折叠成单个 completion）都支持。内置 `tool_choice` 归一、
   Claude Code 模板清洗、按区域注入 system message。
 - **企业版用量配额** — 通过 CodeBuddy 企业版 billing API
-  （`/billing/meter/get-enterprise-user-usage`）查询：剩余积分、月度结算周期、
+  （`/billing/meter/get-enterprise-user-usage`）查询：周期已用积分、月度结算周期、
   周期总额度，逐账号展示。
 - **积分生命周期** — 企业版额度耗尽自动 `disabled`，月度周期重置回血后自动
   恢复；Global 账号耗尽**删除** auth 文件。Executor 遇到硬积分错误立即触发

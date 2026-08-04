@@ -8,8 +8,8 @@
   `/billing/meter/get-enterprise-user-usage` (the CodeBuddy 企业版 billing
   endpoint) instead of the personal-version `/v2/billing/meter/get-user-resource`.
   The response (`credit` / `limitNum` / `cycleStartTime` / `cycleEndTime`) is
-  mapped into `creditsSummary`: remain = credit (rounded), size = limitNum,
-  used = limitNum − remain, one "企业版" package carrying the cycle times.
+  mapped into `creditsSummary`: used = credit (rounded), size = limitNum,
+  remain = limitNum − used, one "企业版" package carrying the cycle times.
   `billingHeaders` now sends `X-Client-Platform: web` + Origin/Referer and
   `Accept: application/json, text/plain, */*` matching the web console.
   Requires only the existing OAuth accessToken (no browser cookies).

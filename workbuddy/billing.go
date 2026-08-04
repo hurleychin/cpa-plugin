@@ -155,7 +155,7 @@ func billingCallOnce(sa *storedAuth, path string, body any) (json.RawMessage, er
 func fetchUserResource(sa *storedAuth) (*creditsSummary, error) {
 	// Enterprise usage endpoint (tencent CodeBuddy billing console "web" client).
 	// POST body is empty; the response carries the enterprise quota snapshot:
-	//   data.credit         — remaining spendable credits for the cycle
+	//   data.credit         — credits USED in the cycle (已用积分)
 	//   data.limitNum       — cycle quota (total)
 	//   data.cycleStartTime / cycleEndTime
 	//   data.cycleResetTime
@@ -167,22 +167,17 @@ func fetchUserResource(sa *storedAuth) (*creditsSummary, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, err
 	}
-	credit := jsonF64(m, "credit")
-	limit := jsonI64(m, "limitNum")
-	if limit < 0 {
-		limit = 0
-	}
-	remain := creditToInt64(credit)
-	if remain < 0 {
-		remain = 0
-	}
-	used := limit - remain
+	used := creditToInt64(jsonF64(m, "credit"))
 	if used < 0 {
 		used = 0
 	}
-	size := limit
-	if size < remain {
-		size = remain
+	size := jsonI64(m, "limitNum")
+	if size < 0 {
+		size = 0
+	}
+	remain := size - used
+	if remain < 0 {
+		remain = 0
 	}
 	sum := &creditsSummary{
 		TotalRemain: remain,

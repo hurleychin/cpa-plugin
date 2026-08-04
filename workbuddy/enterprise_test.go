@@ -50,6 +50,7 @@ func TestJsonF64(t *testing.T) {
 
 // TestFetchUserResource_Enterprise maps the live enterprise usage response
 // into the creditsSummary shape consumed by the panel/lifecycle.
+// The enterprise "credit" field is credits USED in the cycle, not remaining.
 func TestFetchUserResource_Enterprise(t *testing.T) {
 	resp := `{"code":0,"msg":"OK","requestId":"x","data":{"credit":3291.96,"cycleStartTime":"2026-07-15 00:00:00","cycleEndTime":"2026-08-14 23:59:59","limitNum":5000,"cycleResetTime":"2026-08-15 00:00:00"}}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,15 +76,16 @@ func TestFetchUserResource_Enterprise(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchUserResource: %v", err)
 	}
-	if cr.TotalRemain != 3292 {
-		t.Fatalf("TotalRemain = %d, want 3292", cr.TotalRemain)
+	// credit=3291.96 is USED (已用), limitNum=5000 is the cycle size.
+	if cr.TotalUsed != 3292 {
+		t.Fatalf("TotalUsed = %d, want 3292", cr.TotalUsed)
 	}
 	if cr.TotalSize != 5000 {
 		t.Fatalf("TotalSize = %d, want 5000", cr.TotalSize)
 	}
-	// used = 5000 - 3292 = 1708
-	if cr.TotalUsed != 1708 {
-		t.Fatalf("TotalUsed = %d, want 1708", cr.TotalUsed)
+	// remain = 5000 - 3292 = 1708
+	if cr.TotalRemain != 1708 {
+		t.Fatalf("TotalRemain = %d, want 1708", cr.TotalRemain)
 	}
 	if cr.PackCount != 1 {
 		t.Fatalf("PackCount = %d, want 1", cr.PackCount)
@@ -109,9 +111,9 @@ func TestFetchUserResource_Enterprise(t *testing.T) {
 }
 
 // TestFetchUserResource_EnterpriseExhausted covers the exhausted state
-// (credit=0 with a limitNum present).
+// (credit == limitNum, i.e. the whole cycle quota consumed).
 func TestFetchUserResource_EnterpriseExhausted(t *testing.T) {
-	resp := `{"code":0,"msg":"OK","data":{"credit":0,"cycleStartTime":"2026-07-15 00:00:00","cycleEndTime":"2026-08-14 23:59:59","limitNum":5000}}`
+	resp := `{"code":0,"msg":"OK","data":{"credit":5000,"cycleStartTime":"2026-07-15 00:00:00","cycleEndTime":"2026-08-14 23:59:59","limitNum":5000}}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(resp))
@@ -129,6 +131,6 @@ func TestFetchUserResource_EnterpriseExhausted(t *testing.T) {
 		t.Fatalf("TotalRemain = %d, want 0", cr.TotalRemain)
 	}
 	if !isCreditsExhausted(cr) {
-		t.Fatalf("credit=0 with limit should be exhausted")
+		t.Fatalf("credit==limit should be exhausted")
 	}
 }

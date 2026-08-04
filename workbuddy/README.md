@@ -20,8 +20,8 @@ management dashboard.
   completion). `tool_choice` normalization, Claude Code template sanitization,
   and per-realm system-message injection are built in.
 - **Enterprise usage quota** — quota is read from the CodeBuddy 企业版
-  billing API (`/billing/meter/get-enterprise-user-usage`): remaining credits,
-  monthly cycle span, and cycle limit are shown per account.
+  billing API (`/billing/meter/get-enterprise-user-usage`): credits used in
+  the cycle, monthly cycle span, and cycle limit are shown per account.
 - **Credit lifecycle** — accounts are auto-`disabled` when the enterprise
   quota runs out and re-enabled when the monthly cycle resets credits.
   Global accounts are deleted on exhaustion. Hard credit errors from the
