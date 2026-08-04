@@ -18,24 +18,6 @@
         "WorkBuddy",
         "Management"
       ]
-    },
-    {
-      "id": "qoderwork",
-      "name": "QoderWork",
-      "description": "QoderWork CN (qoder.com.cn) provider for CLIProxyAPI: dual login (OAuth device authorization with auto pro-pack claim + PAT import), COSY-signed chat executor, dynamic model list, daily check-in with credit snapshot, token keepalive (deviceToken/jobToken prefix-routed, PAT fallback), accounts panel.",
-      "author": "hurleychin",
-      "version": "0.2.6",
-      "repository": "https://github.com/hurleychin/cpa-plugin",
-      "logo": "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/QoderWork.png",
-      "homepage": "https://github.com/hurleychin/cpa-plugin/tree/main/qoderwork",
-      "license": "MIT",
-      "tags": [
-        "Provider",
-        "OAuth",
-        "QoderWork",
-        "Qoder",
-        "Management"
-      ]
     }
   ]
 }
