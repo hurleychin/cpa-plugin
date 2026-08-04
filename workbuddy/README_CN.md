@@ -1,8 +1,8 @@
 # WorkBuddy 插件（CLIProxyAPI）
 
-[CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) 的 **腾讯 CodeBuddy**
+[CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) 的 **腾讯 CodeBuddy 企业版**
 （国内版 `copilot.tencent.com` + 国际版 `workbuddy.ai`）原生 OAuth 提供商插件：
-动态模型发现、流式执行器、积分感知调度、每日自动签到、内置管理面板。
+动态模型发现、流式执行器、企业版用量配额查询、内置管理面板。
 
 [English → README.md](README.md)
 
@@ -15,13 +15,13 @@
 - **执行器** — OpenAI 兼容 chat completions，流式（真 SSE，走 `host.stream.emit`）
   和非流式（SSE 折叠成单个 completion）都支持。内置 `tool_choice` 归一、
   Claude Code 模板清洗、按区域注入 system message。
-- **积分生命周期** — CN 账号耗尽自动 `disabled`，签到回血后自动恢复；
-  Global 账号耗尽**删除** auth 文件（一次性 trial 额度）。Executor 遇到硬
-  积分错误立即触发 reconcile。
-- **每日签到** — CN 账号每天 09:00 和 21:00 自动签到（可配置）。面板可手动
-  全部签到。Per-account 互斥锁防止多浏览器标签并发重复签到。
-- **Trial 领取** — Global 账号可在面板领取一次性 250 积分专家加油包。
-- **积分面板** — 内嵌面板 `/v0/resource/plugins/workbuddy/panel`，含积分
+- **企业版用量配额** — 通过 CodeBuddy 企业版 billing API
+  （`/billing/meter/get-enterprise-user-usage`）查询：剩余积分、月度结算周期、
+  周期总额度，逐账号展示。
+- **积分生命周期** — 企业版额度耗尽自动 `disabled`，月度周期重置回血后自动
+  恢复；Global 账号耗尽**删除** auth 文件。Executor 遇到硬积分错误立即触发
+  reconcile。
+- **积分面板** — 内嵌面板 `/v0/resource/plugins/workbuddy/panel`，含用量
   进度条、套餐徽章、耗尽/禁用标记、CN/Global 筛选、凭证导入。
 - **调度器**（可选） — `scheduler_mode: credits` 让插件选中面板选中的账号；
   `off`（默认）完全交给 CPA 内置调度。
@@ -89,10 +89,7 @@ plugins:
     workbuddy:
       enabled: true
 
-      # CN 账号每日自动签到（默认 true），09:00 和 21:00 本地时间。
-      checkin_auto: true
-
-      # 积分生命周期：CN 耗尽禁用 / Global 耗尽删除 / CN 回血恢复（默认 true）。
+      # 积分生命周期：额度耗尽禁用 / Global 耗尽删除 / 月度周期重置回血恢复（默认 true）。
       lifecycle_auto: true
 
       # 调度行为（默认 "off"）：
@@ -121,8 +118,7 @@ plugins:
 |---|---|---|
 | 积分 > 0 | active | active |
 | 积分 = 0 | `disabled: true`（auth 文件保留） | auth 文件**删除** |
-| 签到回血 | 自动恢复 | n/a（已删） |
-| Trial 可领 | n/a | 每账号一次 |
+| 月度周期重置回血 | 自动恢复 | n/a（已删） |
 | 积分未知 | 不动（永不误杀） | 不动 |
 
 Executor 遇到硬积分错误（402、"insufficient credits"、"积分不足" 等）

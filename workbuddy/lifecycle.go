@@ -1,5 +1,6 @@
 // lifecycle.go implements credit-based auth lifecycle for workbuddy:
-//   - CN exhausted  → disable auth file (disabled:true), re-enable after check-in when credits return
+//   - CN exhausted  → disable auth file (disabled:true), re-enable after the
+//     monthly cycle resets enterprise quota and credits return
 //   - Global exhausted → delete auth file (one-shot quota)
 //   - Unknown credits → no-op (never mis-kill)
 //   - Hard credit errors from executor → recheck credits then apply policy
@@ -69,7 +70,7 @@ func pruneLifecycleState() {
 
 // disableAuth writes disabled:true for a CN (or fallback) account.
 func disableAuth(authIndex, authID string, sa *storedAuth, cr *creditsSummary, reason string) error {
-	mu := checkinLockFor(authIndex)
+	mu := authLockFor(authIndex)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -111,7 +112,7 @@ func disableAuth(authIndex, authID string, sa *storedAuth, cr *creditsSummary, r
 
 // reenableAuth writes disabled:false when CN has credits again.
 func reenableAuth(authIndex, authID string, sa *storedAuth, cr *creditsSummary) error {
-	mu := checkinLockFor(authIndex)
+	mu := authLockFor(authIndex)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -143,7 +144,7 @@ func reenableAuth(authIndex, authID string, sa *storedAuth, cr *creditsSummary) 
 
 // deleteAuth removes Global exhausted credentials from disk.
 func deleteAuth(authIndex, authID string, sa *storedAuth) error {
-	mu := checkinLockFor(authIndex)
+	mu := authLockFor(authIndex)
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -246,7 +247,7 @@ func syncAuthNote(authIndex, authID string, sa *storedAuth, cr *creditsSummary, 
 	if lifecycleStateUnchanged(authID, disabled, note) {
 		return nil
 	}
-	mu := checkinLockFor(authIndex)
+	mu := authLockFor(authIndex)
 	mu.Lock()
 	defer mu.Unlock()
 	phys, err := hostAuthGetPhysical(authIndex)
@@ -308,8 +309,8 @@ func reconcileOneAccount(authIndex, authID string, force bool) (action lifecycle
 		// serializes concurrent writers for the same authID (P0-2 fix: the
 		// previous Load→Store sequence here had a check-then-act window
 		// where a concurrent dashboard cachedAccountDetails write could
-		// overwrite our merge with newer plan/checkin values).
-		_, _, cr2, _ := cachedAccountDetails(authID, sa, true)
+		// overwrite our merge with newer plan values).
+		_, cr2, _ := cachedAccountDetails(authID, sa, true)
 		cr = cr2
 		if cr == nil {
 			return lifecycleNone, nil
@@ -462,7 +463,7 @@ func reconcileByUID(uid string, status int, body string) {
 // fetch hits upstream. Call after a successful chat completion — otherwise a
 // short TTL cache makes "used" look frozen while the user is burning credits.
 func invalidateAccountCredits(authID, authUID string) {
-	// Invalidate credits only — keep plan/checkin in cache.
+	// Invalidate credits only — keep plan in cache.
 	invalidateCredits := func(id string) {
 		if v, ok := accountCache.Load(id); ok {
 			if e, ok2 := v.(*accountCacheEntry); ok2 {

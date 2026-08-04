@@ -1,10 +1,10 @@
 # WorkBuddy Plugin for CLIProxyAPI
 
 A [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIProxyAPI) plugin that
-provides **Tencent CodeBuddy** (`copilot.tencent.com` CN and `workbuddy.ai`
-Global) as a native OAuth provider: dynamic model discovery, streaming executor,
-credit-aware scheduling, daily check-in automation, and a built-in management
-dashboard.
+provides **Tencent CodeBuddy 企业版** (`copilot.tencent.com` CN and
+`workbuddy.ai` Global) as a native OAuth provider: dynamic model discovery,
+streaming executor, enterprise usage-quota tracking, and a built-in
+management dashboard.
 
 [中文文档 → README_CN.md](README_CN.md)
 
@@ -19,17 +19,15 @@ dashboard.
   via `host.stream.emit`) and non-streaming (SSE folded into a single
   completion). `tool_choice` normalization, Claude Code template sanitization,
   and per-realm system-message injection are built in.
-- **Credit lifecycle** — CN accounts auto-`disabled` when credits run out and
-  re-enabled when a check-in restores them. Global accounts are deleted on
-  exhaustion (one-shot trial quota). Hard credit errors from the executor
-  trigger an immediate reconcile.
-- **Daily check-in** — CN accounts are checked in at 09:00 and 21:00 local
-  time (configurable). Manual "check in all" from the panel. Per-account
-  mutex prevents duplicate claims from racing browser tabs.
-- **Trial claim** — Global accounts can claim the one-time 250-credit expert
-  trial pack from the panel.
+- **Enterprise usage quota** — quota is read from the CodeBuddy 企业版
+  billing API (`/billing/meter/get-enterprise-user-usage`): remaining credits,
+  monthly cycle span, and cycle limit are shown per account.
+- **Credit lifecycle** — accounts are auto-`disabled` when the enterprise
+  quota runs out and re-enabled when the monthly cycle resets credits.
+  Global accounts are deleted on exhaustion. Hard credit errors from the
+  executor trigger an immediate reconcile.
 - **Dashboard** — embedded panel at `/v0/resource/plugins/workbuddy/panel`
-  with credits progress bars, plan badges, exhausted/disabled flags, region
+  with usage progress bars, plan badges, exhausted/disabled flags, region
   filter, and credential import.
 - **Scheduler** (optional) — `scheduler_mode: credits` makes the plugin pick
   the panel-selected account; `off` (default) defers to CPA's built-in
@@ -101,12 +99,8 @@ plugins:
     workbuddy:
       enabled: true
 
-      # Daily check-in automation for CN accounts (default true).
-      # Runs at 09:00 and 21:00 local time.
-      checkin_auto: true
-
-      # Credit lifecycle: disable CN on exhaust, delete Global on exhaust,
-      # re-enable CN after check-in restores credits (default true).
+      # Credit lifecycle: disable on quota exhaust, delete Global on exhaust,
+      # re-enable when the monthly cycle resets quota (default true).
       lifecycle_auto: true
 
       # Scheduler behavior (default "off"):
@@ -138,8 +132,7 @@ duplication needed.
 |---|---|---|
 | Credits > 0 | active | active |
 | Credits = 0 | `disabled: true` (auth file kept) | auth file **deleted** |
-| Check-in restores credits | re-enabled | n/a (already deleted) |
-| Trial available | n/a | claimable once per account |
+| Monthly cycle resets quota | re-enabled | n/a (already deleted) |
 | Unknown credits | untouched (never mis-kill) | untouched |
 
 Hard credit errors from the executor (status 402, "insufficient credits",

@@ -1,6 +1,6 @@
 // management.go implements the WorkBuddy management API and web panel:
-// account dashboard (nickname, credits, plan, check-in streak), manual/auto
-// check-in (daily at 09:00 and 21:00 local time), and quota refresh.
+// account dashboard (nickname, enterprise quota, plan), token refresh
+// keepalive, and quota refresh.
 package main
 
 import (
@@ -54,47 +54,12 @@ type packageSummary struct {
 	CycleEnd   string `json:"cycle_end"`
 }
 
-type checkinSummary struct {
-	Active          bool     `json:"active"`
-	TodayCheckedIn  bool     `json:"today_checked_in"`
-	StreakDays      int64    `json:"streak_days"`
-	DailyCredit     int64    `json:"daily_credit"`
-	TodayCredit     int64    `json:"today_credit"`
-	TotalCredits    int64    `json:"total_credits"`
-	WeekCheckinDays int64    `json:"week_checkin_days"`
-	ActivityName    string   `json:"activity_name"`
-	Season          int64    `json:"season"`
-	CheckinDates    []string `json:"checkin_dates,omitempty"`
-}
-
 // with a transient error (HTTP 5xx or transport error). codebuddy.cn
 // intermittently returns 500s; without a retry a single hiccup surfaces as a
 // panel error even though the very next request would succeed.
 var billingRetryDelays = []time.Duration{300 * time.Millisecond, 900 * time.Millisecond}
 
-// CapacityRemain/Used/Size         — lifetime package totals (Used often ≈0
-//
-//	for monthly-refresh free packs)
-//
-// CycleCapacityRemain/Used/Size    — the active billing cycle; Used is
-//
-//	sometimes omitted entirely
-type resourcePackage struct {
-	PackageName         string `json:"PackageName"`
-	CapacityRemain      int64  `json:"CapacityRemain"`
-	CapacityUsed        int64  `json:"CapacityUsed"`
-	CapacitySize        int64  `json:"CapacitySize"`
-	CycleCapacityRemain int64  `json:"CycleCapacityRemain"`
-	CycleCapacityUsed   int64  `json:"CycleCapacityUsed"`
-	CycleCapacitySize   int64  `json:"CycleCapacitySize"`
-	CycleStartTime      string `json:"CycleStartTime"`
-	CycleEndTime        string `json:"CycleEndTime"`
-}
-
 // -----------------------------------------------------------------------------
-// Auto check-in scheduler (09:00 / 21:00 local)
-// -----------------------------------------------------------------------------
-
 // Management API routes + handler
 // -----------------------------------------------------------------------------
 
@@ -143,19 +108,16 @@ func managementRegistration() managementRegistrationResponse {
 	base := "/plugins/" + providerName
 	return managementRegistrationResponse{
 		Routes: []managementRoute{
-			{Method: http.MethodGet, Path: base + "/accounts", Description: "List WorkBuddy accounts with credits, plan and check-in status."},
+			{Method: http.MethodGet, Path: base + "/accounts", Description: "List WorkBuddy accounts with credits, plan and quota status."},
 			{Method: http.MethodPost, Path: base + "/refresh", Description: "Force refresh quota/cache for all accounts."},
-			{Method: http.MethodPost, Path: base + "/checkin", Description: "Manually check in one account (auth_index) or all."},
-			{Method: http.MethodPost, Path: base + "/checkin/config", Description: "Toggle auto check-in (enabled: true/false)."},
 			{Method: http.MethodGet, Path: base + "/credits", Description: "Get real-time credits for one (auth_index query) or all accounts."},
 			{Method: http.MethodPost, Path: base + "/import", Description: "Import WorkBuddy credential JSON (nested or flat) into host auth store."},
-			{Method: http.MethodPost, Path: base + "/trial", Description: "Claim expert trial pack for one Global account (auth_index). One-time 250 credits / 14 days."},
 			{Method: http.MethodPost, Path: base + "/select", Description: "Select the active account card used for chat routing (body: {auth_index})."},
 			{Method: http.MethodPost, Path: base + "/keepalive", Description: "Manually refresh access tokens for all accounts (or one with auth_index)."},
 			{Method: http.MethodGet, Path: base + "/keepalive/status", Description: "Last keepalive run summary + config."},
 		},
 		Resources: []resourceRoute{
-			{Path: "/panel", Menu: "WorkBuddy", Description: "WorkBuddy dashboard: credits, check-in, plan, import."},
+			{Path: "/panel", Menu: "WorkBuddy", Description: "WorkBuddy dashboard: enterprise quota, plan, import."},
 		},
 	}
 }
@@ -195,16 +157,10 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, buildDashboardEx(false, false)))
 	case req.Method == http.MethodPost && path == base+"/refresh":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, buildDashboardEx(true, true)))
-	case req.Method == http.MethodPost && path == base+"/checkin":
-		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleManualCheckin(req)))
-	case req.Method == http.MethodPost && path == base+"/checkin/config":
-		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleCheckinConfig(req)))
 	case req.Method == http.MethodGet && path == base+"/credits":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleCreditsQuery(req)))
 	case req.Method == http.MethodPost && path == base+"/import":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleImportAuth(req)))
-	case req.Method == http.MethodPost && path == base+"/trial":
-		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleClaimTrial(req)))
 	case req.Method == http.MethodPost && path == base+"/select":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleSelectAuth(req)))
 	case req.Method == http.MethodPost && path == base+"/keepalive":
@@ -321,16 +277,13 @@ func managementClientIP(req pluginapi.ManagementRequest) string {
 	return ""
 }
 
-// mutatingManagementPath reports whether the path performs a write (checkin,
-// import, trial claim, select, refresh, config toggle). Read endpoints pass.
+// mutatingManagementPath reports whether the path performs a write (import,
+// select, refresh, keepalive). Read endpoints pass.
 func mutatingManagementPath(path string) bool {
 	base := loadedManagementBasePath() + "/plugins/" + providerName
 	switch path {
 	case base + "/refresh",
-		base + "/checkin",
-		base + "/checkin/config",
 		base + "/import",
-		base + "/trial",
 		base + "/select",
 		base + "/keepalive":
 		return true
@@ -350,10 +303,3 @@ func mgmtHTMLResponse(body []byte) pluginapi.ManagementResponse {
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	return pluginapi.ManagementResponse{StatusCode: http.StatusOK, Headers: h, Body: body}
 }
-
-// checkinLocks serializes per-account manual check-in (B4).
-// Entries are pruned during dashboard prune to avoid unbounded growth
-// when auth accounts are deleted/rotated.
-var (
-	checkinLocks sync.Map // auth_index -> *sync.Mutex
-)

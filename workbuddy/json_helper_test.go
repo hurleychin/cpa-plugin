@@ -68,24 +68,21 @@ func TestJsonStr(t *testing.T) {
 		t.Error("fallback")
 	}
 }
-func TestNextCheckinTime(t *testing.T) {
-	// 08:00 → next 09:00
+func TestNextScheduledTime(t *testing.T) {
+	// 08:00 → next 22:00
 	morning := time.Date(2026, 7, 24, 8, 0, 0, 0, time.UTC)
-	got := nextCheckinTime(morning)
-	if got.Hour() != 9 {
-		t.Fatalf("want 9, got %v", got.Hour())
+	got := nextScheduledTime(morning)
+	if got.Hour() != 22 {
+		t.Fatalf("want 22, got %v", got.Hour())
 	}
-	// 10:00 → next 21:00
-	noon := time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)
-	got = nextCheckinTime(noon)
-	if got.Hour() != 21 {
-		t.Fatalf("want 21, got %v", got.Hour())
+	if got.Day() != 24 {
+		t.Fatalf("want same day, got %v", got.Day())
 	}
-	// 22:00 → next day 09:00
-	late := time.Date(2026, 7, 24, 22, 0, 0, 0, time.UTC)
-	got = nextCheckinTime(late)
-	if got.Hour() != 9 {
-		t.Fatalf("want 9, got %v", got.Hour())
+	// 23:00 → next day 22:00
+	late := time.Date(2026, 7, 24, 23, 0, 0, 0, time.UTC)
+	got = nextScheduledTime(late)
+	if got.Hour() != 22 {
+		t.Fatalf("want 22, got %v", got.Hour())
 	}
 	if got.Day() != 25 {
 		t.Fatalf("want next day, got %v", got.Day())

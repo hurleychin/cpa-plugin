@@ -1,6 +1,6 @@
 // credits_handler.go implements the management API endpoints that mutate or
-// read account state: import credential, toggle check-in, claim trial, select
-// active auth, and query credits for one account or all.
+// read account state: import credential, select active auth, and query credits
+// (enterprise quota) for one account or all.
 package main
 
 import (
@@ -77,76 +77,6 @@ func handleImportAuth(req pluginapi.ManagementRequest) map[string]any {
 	}
 }
 
-func handleCheckinConfig(req pluginapi.ManagementRequest) map[string]any {
-	var body struct {
-		Enabled *bool `json:"enabled"`
-	}
-	_ = json.Unmarshal(req.Body, &body)
-	checkinAutoMu.Lock()
-	if body.Enabled != nil {
-		// Runtime-only toggle: the CPA host exposes no plugin-config write
-		// callback, so persisting would mean editing the host's config.yaml
-		// from inside the plugin (fragile under docker volume mounts). The
-		// value from config_yaml wins again on CPA restart.
-		checkinAuto = *body.Enabled
-	}
-	cur := checkinAuto
-	checkinAutoMu.Unlock()
-	return map[string]any{"checkin_auto": cur, "persistent": false}
-}
-
-// handleClaimTrial claims the expert trial pack for one Global account.
-// CN accounts are rejected — the trial endpoint is Global-only.
-func handleClaimTrial(req pluginapi.ManagementRequest) map[string]any {
-	var body struct {
-		AuthIndex string `json:"auth_index"`
-	}
-	_ = json.Unmarshal(req.Body, &body)
-	authIndex := strings.TrimSpace(body.AuthIndex)
-	if authIndex == "" {
-		return map[string]any{"error": "auth_index is required"}
-	}
-	files, err := hostAuthList()
-	if err != nil {
-		return map[string]any{"error": err.Error()}
-	}
-	for _, f := range files {
-		if f.AuthIndex != authIndex {
-			continue
-		}
-		sa, err := hostAuthGet(f.AuthIndex)
-		if err != nil {
-			return map[string]any{"auth_index": authIndex, "error": err.Error()}
-		}
-		if !isGlobalDomain(sa.Auth.Domain) {
-			return map[string]any{"auth_index": authIndex, "error": "专家加油包仅适用于国际版账号"}
-		}
-		res, err := performTrialCall(sa)
-		out := map[string]any{"auth_index": authIndex, "nickname": sa.Account.Nickname}
-		if err != nil {
-			out["error"] = err.Error()
-		} else {
-			for k, v := range res {
-				out[k] = v
-			}
-		}
-		// Invalidate credits cache (copy entry, set credits=nil, keep plan/checkin).
-		if v, ok := accountCache.Load(f.ID); ok {
-			if e, ok2 := v.(*accountCacheEntry); ok2 {
-				fresh := *e
-				fresh.credits = nil
-				fresh.fetched = time.Now()
-				accountCache.Store(f.ID, &fresh)
-			}
-		}
-		if lifecycleEnabled() {
-			_, _ = reconcileOneAccount(authIndex, f.ID, true)
-		}
-		return out
-	}
-	return map[string]any{"error": "account not found"}
-}
-
 // handleSelectAuth sets the panel-selected account used for chat routing.
 // Region (CN/Global) is read from that account's stored domain on each request.
 func handleSelectAuth(req pluginapi.ManagementRequest) map[string]any {
@@ -185,11 +115,10 @@ func handleSelectAuth(req pluginapi.ManagementRequest) map[string]any {
 	return map[string]any{"error": "account not found", "auth_index": authIndex}
 }
 
-// handleCreditsQuery returns real-time credits for one or all accounts.
-// Pass ?auth_index=<idx> to query a single account; omit for all.
+// handleCreditsQuery returns real-time credits (enterprise quota) for one or
+// all accounts. Pass ?auth_index=<idx> to query a single account; omit for all.
 // Single-account mode returns full account info (nickname, region, credits,
-// exhausted, trial_claimed) so the panel can update one card without
-// reloading the entire dashboard.
+// exhausted) so the panel can update one card without reloading the dashboard.
 func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 	authIndex := ""
 	if vals := req.Query["auth_index"]; len(vals) > 0 {
@@ -227,9 +156,6 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 			} else {
 				acct["credits"] = cr
 				acct["exhausted"] = isCreditsExhausted(cr)
-				if isGlobalDomain(sa.Auth.Domain) {
-					acct["trial_claimed"] = hasTrialPack(cr)
-				}
 				// Also fetch plan so the badge updates on lazy load.
 				acct["plan"] = fetchPaymentType(sa)
 				// Update cache so subsequent dashboard loads see fresh data.
@@ -237,18 +163,9 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 				if cr != nil {
 					cr.FetchedAt = now.UTC().Format(time.RFC3339)
 				}
-				// Merge into existing cache entry (keep checkin if present).
-				var prev *accountCacheEntry
-				if v, ok := accountCache.Load(f.ID); ok {
-					prev, _ = v.(*accountCacheEntry)
-				}
-				var ci *checkinSummary
-				if prev != nil {
-					ci = prev.checkin
-				}
 				plan, _ := acct["plan"].(string)
 				accountCache.Store(f.ID, &accountCacheEntry{
-					checkin: ci, credits: cr, plan: plan, fetched: now,
+					credits: cr, plan: plan, fetched: now,
 				})
 			}
 			return map[string]any{"accounts": []map[string]any{acct}}

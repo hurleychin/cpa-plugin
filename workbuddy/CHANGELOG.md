@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.7
+
+### Switch to CodeBuddy Enterprise (企业版) usage model
+
+- `billing.go` — `fetchUserResource` now queries
+  `/billing/meter/get-enterprise-user-usage` (the CodeBuddy 企业版 billing
+  endpoint) instead of the personal-version `/v2/billing/meter/get-user-resource`.
+  The response (`credit` / `limitNum` / `cycleStartTime` / `cycleEndTime`) is
+  mapped into `creditsSummary`: remain = credit (rounded), size = limitNum,
+  used = limitNum − remain, one "企业版" package carrying the cycle times.
+  `billingHeaders` now sends `X-Client-Platform: web` + Origin/Referer and
+  `Accept: application/json, text/plain, */*` matching the web console.
+  Requires only the existing OAuth accessToken (no browser cookies).
+- Removed personal-version features: daily check-in (09:00/21:00 scheduler,
+  `checkin_auto` config, `/checkin` + `/checkin/config` endpoints, check-in
+  status/perform calls) and the Global expert-trial claim
+  (`/trial` endpoint, `performTrialCall`, `hasTrialPack`).
+- `checkin.go` — repurposed as the scheduler owner: the loop now wakes only
+  the 22:00 keepalive tick (and runs lifecycle reconcile). Per-account
+  auth-operation locks renamed `checkinLockFor`→`authLockFor`.
+- `cache.go` / `panel.go` — dropped `checkin`/`checkinSummary` from the cache
+  entry and `wbAccount`; dashboard no longer exposes `checkin_auto`,
+  `trial_claimed`, or the 09:00/21:00 schedule.
+- `panel.html` — removed check-in / trial-claim buttons and logic; the panel
+  now shows enterprise quota progress.
+- Version 0.8.6 → 0.8.7.
+
 ## 0.8.2
 
 ### Concurrency + lifecycle hardening

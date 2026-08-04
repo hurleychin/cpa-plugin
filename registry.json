@@ -4,9 +4,9 @@
     {
       "id": "workbuddy",
       "name": "WorkBuddy",
-      "description": "Tencent CodeBuddy (WorkBuddy) OAuth provider for CLIProxyAPI: multi-account login, dynamic models, chat executor, CN daily check-in, Global one-shot expert trial (manual), credit lifecycle (disable CN / delete Global when exhausted), credits panel with CN/Global filters, optional credits-aware scheduler.",
+      "description": "Tencent CodeBuddy (WorkBuddy) OAuth provider for CLIProxyAPI: multi-account login, dynamic models, chat executor, enterprise (企业版) usage quota query with monthly cycle, credit lifecycle (disable CN / delete Global when quota exhausted), credits panel with CN/Global filters, optional credits-aware scheduler.",
       "author": "hurleychin",
-      "version": "0.8.6",
+      "version": "0.8.7",
       "repository": "https://github.com/hurleychin/cpa-plugin",
       "logo": "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png",
       "homepage": "https://github.com/hurleychin/cpa-plugin/tree/main/workbuddy",

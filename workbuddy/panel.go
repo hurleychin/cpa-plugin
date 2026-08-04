@@ -13,28 +13,25 @@ import (
 
 // wbAccount is one row of the dashboard.
 type wbAccount struct {
-	AuthIndex    string          `json:"auth_index"`
-	AuthID       string          `json:"auth_id,omitempty"`
-	Name         string          `json:"name"`
-	Label        string          `json:"label"`
-	Nickname     string          `json:"nickname"`
-	UID          string          `json:"uid"`
-	Region       string          `json:"region"` // "cn" or "global"
-	Plan         string          `json:"plan"`
-	Status       string          `json:"status"`
-	Disabled     bool            `json:"disabled"`
-	Exhausted    bool            `json:"exhausted"`
-	Selected     bool            `json:"selected"` // panel active routing card
-	Credits      *creditsSummary `json:"credits,omitempty"`
-	Checkin      *checkinSummary `json:"checkin,omitempty"`
-	TrialClaimed bool            `json:"trial_claimed,omitempty"` // Global: expert trial already claimed
-	Error        string          `json:"error,omitempty"`
+	AuthIndex string          `json:"auth_index"`
+	AuthID    string          `json:"auth_id,omitempty"`
+	Name      string          `json:"name"`
+	Label     string          `json:"label"`
+	Nickname  string          `json:"nickname"`
+	UID       string          `json:"uid"`
+	Region    string          `json:"region"` // "cn" or "global"
+	Plan      string          `json:"plan"`
+	Status    string          `json:"status"`
+	Disabled  bool            `json:"disabled"`
+	Exhausted bool            `json:"exhausted"`
+	Selected  bool            `json:"selected"` // panel active routing card
+	Credits   *creditsSummary `json:"credits,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
-// credits/checkin/plan fields are left empty — the panel renders skeletons
+// credits/plan fields are left empty — the panel renders skeletons
 // and fetches them lazily via /credits?auth_index=<idx>. This avoids hitting
-// upstream billing APIs for all accounts simultaneously on page load (which
-// causes 500 from rate-limited /v2/billing/meter/get-user-resource).
+// upstream billing APIs for all accounts simultaneously on page load.
 func buildDashboardEx(force, fetchCredits bool) map[string]any {
 	files, err := hostAuthList()
 	if err != nil {
@@ -51,7 +48,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 		idx, _ := key.(string)
 		if _, ok := live[idx]; !ok {
 			accountCache.Delete(key)
-			checkinLocks.Delete(key)
+			authLocks.Delete(key)
 			lifecycleState.Delete(key)
 			return true
 		}
@@ -60,9 +57,9 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 		}
 		return true
 	})
-	// Also prune stale lifecycle state and checkin locks for gone accounts.
+	// Also prune stale lifecycle state and auth locks for gone accounts.
 	pruneLifecycleState()
-	pruneCheckinLocks()
+	pruneAuthLocks()
 	out := make([]wbAccount, len(files))
 	// Accounts are independent — fetch their dashboards concurrently. With 4
 	// accounts this cuts cold-load latency from ~4×(3 serial upstream calls)
@@ -97,14 +94,10 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 			acct.UID = sa.Account.UID
 			acct.Region = accountRegion(sa)
 			if fetchCredits {
-				plan, ci, cr, errs := cachedAccountDetails(f.ID, sa, force)
+				plan, cr, errs := cachedAccountDetails(f.ID, sa, force)
 				acct.Plan = plan
-				acct.Checkin = ci
 				acct.Credits = cr
 				acct.Exhausted = isCreditsExhausted(cr)
-				if isGlobalDomain(sa.Auth.Domain) {
-					acct.TrialClaimed = hasTrialPack(cr)
-				}
 				// Keep note in sync (throttled); do not block dashboard on save errors.
 				_ = syncAuthNote(f.AuthIndex, f.ID, sa, cr, acct.Disabled)
 				acct.Error = strings.Join(errs, "; ")
@@ -113,12 +106,8 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 				if v, ok := accountCache.Load(f.ID); ok {
 					if e, ok2 := v.(*accountCacheEntry); ok2 {
 						acct.Plan = e.plan
-						acct.Checkin = e.checkin
 						acct.Credits = e.credits
 						acct.Exhausted = isCreditsExhausted(e.credits)
-						if isGlobalDomain(sa.Auth.Domain) {
-							acct.TrialClaimed = hasTrialPack(e.credits)
-						}
 					}
 				}
 			}
@@ -159,9 +148,6 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 						if e.plan != "" {
 							a.Plan = e.plan
 						}
-						if e.checkin != nil {
-							a.Checkin = e.checkin
-						}
 					}
 				}
 				filtered = append(filtered, a)
@@ -169,9 +155,6 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 			out = filtered
 		}
 	}
-	checkinAutoMu.RLock()
-	auto := checkinAuto
-	checkinAutoMu.RUnlock()
 	// Ensure default selection for panel + scheduler (first usable card).
 	activeID := ensureDefaultActiveAuth(out)
 	// Aggregate credits for panel/API consumers (all accounts currently in out).
@@ -183,9 +166,8 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 	resp := map[string]any{
 		"accounts":       out,
 		"active_auth":    activeID,
-		"checkin_auto":   auto,
 		"lifecycle_auto": lifecycleEnabled(),
-		"schedule":       []string{"09:00", "21:00"},
+		"schedule":       keepaliveHours,
 		"server_time":    time.Now().Format("2006-01-02 15:04:05"),
 		"summary":        sum,
 	}
