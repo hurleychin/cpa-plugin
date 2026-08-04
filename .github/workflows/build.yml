@@ -232,31 +232,17 @@ jobs:
           NOTES=$(cat <<EOF
           ## ${PLUGIN} CPA plugin v${VERSION}
 
-          Linux amd64 build for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) plugin store (\`github-release\` install type).
+          Linux amd64 build for CLIProxyAPI plugin store (github-release install type).
 
-          ### Assets (pluginstore \`ArchiveName(id, version, goos, goarch)\`)
-          | File | Contents |
-          |---|---|
-          | \`${PLUGIN}_${VERSION}_linux_amd64.zip\` | \`${PLUGIN}.so\` |
-          | \`checksums.txt\` | SHA256 of zips |
-
-          ### Manual install (linux/amd64 example)
-          \`\`\`bash
-          unzip ${PLUGIN}_${VERSION}_linux_amd64.zip
-          cp ${PLUGIN}.so /path/to/cliproxyapi/plugins/${PLUGIN}.so
-          \`\`\`
-
-          ### Remote update (custom plugin source)
-          \`\`\`
-          https://raw.githubusercontent.com/hurleychin/cpa-plugin/main/registry.json
-          \`\`\`
+          Assets (pluginstore ArchiveName(id, version, goos, goarch)):
+          - ${PLUGIN}_${VERSION}_linux_amd64.zip
+          - checksums.txt
           EOF
           )
-          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release upload "${TAG}" out/${PLUGIN}_*.zip out/checksums.txt --clobber --repo "${GITHUB_REPOSITORY}"
-          else
-            gh release create "${TAG}" out/${PLUGIN}_*.zip out/checksums.txt \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "${PLUGIN} v${VERSION}" \
-              --notes "${NOTES}"
-          fi
+          set -x
+          ls -la out/
+          gh release create "${TAG}" out/${PLUGIN}_${VERSION}_linux_amd64.zip out/checksums.txt \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${PLUGIN} v${VERSION}" \
+            --notes "${NOTES}"
+          set +x
