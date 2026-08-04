@@ -1,7 +1,11 @@
 # CPA plugin build & release (workbuddy, linux/amd64 only for fast builds).
-#   - tag 'workbuddy-v*'  → release workbuddy at that version
-#   - workflow_dispatch   → pick plugin + version manually
-#   - plain push/PR       → CI builds (artifacts only, no release)
+#   - tag 'v<version>'   → release workbuddy at that version
+#   - workflow_dispatch  → pick plugin + version manually
+#   - plain push/PR      → CI builds (artifacts only, no release)
+#
+# The release tag must be a plain version (e.g. v0.0.1). CPA's pluginstore
+# derives the plugin version from the release tag directly (after stripping a
+# leading v), so tags like <id>-v<version> fail its validation.
 #
 # Asset naming matches CLIProxyAPI pluginstore ArchiveName():
 #   <id>_<version>_<goos>_<goarch>.zip   (zip root: <id>.so)
@@ -12,7 +16,7 @@ on:
   pull_request:
   push:
     branches: [main]
-    tags: ["workbuddy-v*"]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       plugin:
@@ -84,9 +88,9 @@ jobs:
         run: |
           set -euo pipefail
           PLUGIN="${{ matrix.id }}"
-          # Version resolution: tag of this plugin > dispatch input > VERSION file
-          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME}" == ${PLUGIN}-v* ]]; then
-            VERSION="${GITHUB_REF_NAME#${PLUGIN}-v}"
+          # Version resolution: release tag (v<version>) > dispatch input > VERSION file
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
           elif [ -n "${{ github.event.inputs.version }}" ] && [ "${{ github.event.inputs.plugin }}" == "${PLUGIN}" ]; then
             VERSION="${{ github.event.inputs.version }}"
           else
@@ -144,10 +148,10 @@ jobs:
 
   release:
     name: Release
-    # Only for a tag of a specific plugin, or dispatch with a version.
+    # Only for a release tag (v<version>), or dispatch with a version.
     if: >-
       (github.event_name == 'workflow_dispatch' && github.event.inputs.version != '') ||
-      startsWith(github.ref, 'refs/tags/workbuddy-v')
+      startsWith(github.ref, 'refs/tags/v')
     needs:
       - build
     runs-on: ubuntu-24.04
@@ -164,11 +168,11 @@ jobs:
             P="${{ github.event.inputs.plugin }}"
             V="${{ github.event.inputs.version }}"
           else
-            P="workbuddy"; V="${GITHUB_REF_NAME#workbuddy-v}"
+            P="workbuddy"; V="${GITHUB_REF_NAME#v}"
           fi
           echo "plugin=$P" >> "$GITHUB_OUTPUT"
           echo "version=$V" >> "$GITHUB_OUTPUT"
-          echo "tag=${P}-v${V}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${V}" >> "$GITHUB_OUTPUT"
           echo "Releasing $P v$V"
 
       - name: Download build artifacts
