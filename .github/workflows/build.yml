@@ -229,20 +229,7 @@ jobs:
               git push origin "${TAG}"
             fi
           fi
-          NOTES=$(cat <<EOF
-          ## ${PLUGIN} CPA plugin v${VERSION}
-
-          Linux amd64 build for CLIProxyAPI plugin store (github-release install type).
-
-          Assets (pluginstore ArchiveName(id, version, goos, goarch)):
-          - ${PLUGIN}_${VERSION}_linux_amd64.zip
-          - checksums.txt
-          EOF
-          )
-          set -x
-          ls -la out/
           gh release create "${TAG}" out/${PLUGIN}_${VERSION}_linux_amd64.zip out/checksums.txt \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${PLUGIN} v${VERSION}" \
-            --notes "${NOTES}"
-          set +x
+            --notes "${PLUGIN} CPA plugin v${VERSION} - Linux amd64 build for CLIProxyAPI plugin store"
