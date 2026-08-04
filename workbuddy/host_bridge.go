@@ -151,17 +151,32 @@ func hostHTTPDo(req *http.Request) (*hostHTTPResponse, error) {
 		return hostHTTPDoDirect(req, bodyBytes)
 	}
 	var resp struct {
-		StatusCode int                 `json:"status_code"`
+		StatusCode int                 `json:"StatusCode"`
+		Status     int                 `json:"status_code"`
 		Headers    map[string][]string `json:"headers,omitempty"`
+		HeadersPC  map[string][]string `json:"Headers,omitempty"`
 		Body       []byte              `json:"body,omitempty"`
+		BodyPC     []byte              `json:"Body,omitempty"`
 	}
 	if err := json.Unmarshal(result, &resp); err != nil {
 		return nil, fmt.Errorf("decode host.http.do response: %w", err)
 	}
+	status := resp.StatusCode
+	if status == 0 {
+		status = resp.Status
+	}
+	hdrs := http.Header(resp.Headers)
+	if len(hdrs) == 0 {
+		hdrs = http.Header(resp.HeadersPC)
+	}
+	body := resp.Body
+	if body == nil {
+		body = resp.BodyPC
+	}
 	return &hostHTTPResponse{
-		StatusCode: resp.StatusCode,
-		Headers:    http.Header(resp.Headers),
-		Body:       resp.Body,
+		StatusCode: status,
+		Headers:    hdrs,
+		Body:       body,
 	}, nil
 }
 

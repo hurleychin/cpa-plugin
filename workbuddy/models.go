@@ -48,43 +48,57 @@ func storeDynamicModels(models []pluginapi.ModelInfo) {
 	dynamicModelsCache.Unlock()
 }
 
-func fetchDynamicModelsFromStorage(storageJSON []byte) []pluginapi.ModelInfo {
+func fetchDynamicModelsFromStorage(sa *storedAuth) []pluginapi.ModelInfo {
 	if models, ok := cachedDynamicModels(); ok {
 		return models
 	}
-	accessToken := ""
-	if len(storageJSON) > 0 {
-		if tok, ok := extractAccessToken(storageJSON); ok {
-			accessToken = tok
-		}
-	}
-	if accessToken == "" {
+	if sa == nil || strings.TrimSpace(sa.Auth.AccessToken) == "" {
 		return wbModels()
 	}
-	if dyn, err := callModelsAPI(accessToken); err == nil && len(dyn) > 0 {
-		storeDynamicModels(dyn)
-		return dyn
-	}
-	return wbModels()
-}
+	accessToken := sa.Auth.AccessToken
 
-// fetchDynamicModels calls the WorkBuddy API to get the latest model list.
-// Falls back to the hardcoded list on any error.
-// extractAccessToken handles both flat (CPA UI) and nested (plugin OAuth) auth file shapes.
-func extractAccessToken(raw []byte) (string, bool) {
-	// flat shape from CPA-Manager-Plus UI
-	var flat struct {
-		AccessToken string `json:"accessToken"`
+	// Merge the personal cli-agent model list with the enterprise account's
+	// custom-configured models. Enterprise models (custom:* IDs) are preferred
+	// and deduplicated against personal IDs.
+	personal, personalErr := callModelsAPI(accessToken)
+	enterprise, enterpriseErr := callEnterpriseModelsAPI(sa)
+
+	var out []pluginapi.ModelInfo
+	seen := make(map[string]struct{}, len(personal)+len(enterprise))
+	for _, m := range enterprise {
+		if m.ID == "" {
+			continue
+		}
+		if _, dup := seen[m.ID]; dup {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		out = append(out, m)
 	}
-	if err := json.Unmarshal(raw, &flat); err == nil && strings.TrimSpace(flat.AccessToken) != "" {
-		return flat.AccessToken, true
+	for _, m := range personal {
+		if m.ID == "" {
+			continue
+		}
+		if _, dup := seen[m.ID]; dup {
+			continue
+		}
+		seen[m.ID] = struct{}{}
+		out = append(out, m)
 	}
-	// nested shape from plugin OAuth
-	var nested storedAuth
-	if err := json.Unmarshal(raw, &nested); err == nil && strings.TrimSpace(nested.Auth.AccessToken) != "" {
-		return nested.Auth.AccessToken, true
+
+	if len(out) == 0 {
+		// Both upstream fetches failed (or returned nothing usable): fall back
+		// to the hardcoded list, keeping the personal error for diagnosis.
+		if personalErr != nil {
+			return wbModels()
+		}
+		if enterpriseErr != nil {
+			return wbModels()
+		}
+		return wbModels()
 	}
-	return "", false
+	storeDynamicModels(out)
+	return out
 }
 
 // realmFromToken decodes the JWT iss claim to determine the account realm.
@@ -242,6 +256,100 @@ func callModelsAPI(accessToken string) ([]pluginapi.ModelInfo, error) {
 		})
 	}
 	return out, nil
+}
+
+// callEnterpriseModelsAPI GETs /console/enterprises/{enterpriseId}/config/models
+// from the upstream — the enterprise (企业版) account's custom model list. Only
+// valid when the account carries an EnterpriseID; returns an error otherwise so
+// callers fall back to the personal cli-agent list.
+//
+// Response shape differs from the personal endpoint: data is a flat array of
+// custom-configured models (ids prefixed "custom:") with no agents wrapper.
+func callEnterpriseModelsAPI(sa *storedAuth) ([]pluginapi.ModelInfo, error) {
+	eid := strings.TrimSpace(sa.Account.EnterpriseID)
+	if eid == "" {
+		return nil, fmt.Errorf("no enterprise id")
+	}
+	isGlobal := isGlobalToken(sa.Auth.AccessToken)
+	base := upstreamBaseCN
+	origin := originReferer
+	if isGlobal {
+		base = upstreamBaseGlobal
+		origin = originRefererGlobal
+	}
+	modelsURL := base + "/console/enterprises/" + eid + "/config/models"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+sa.Auth.AccessToken)
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", clientUA)
+	req.Header.Set("Origin", origin)
+	req.Header.Set("Referer", origin+"/")
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("X-Request-Id", randomHex(16))
+	req.Header.Set("X-Product", "SaaS")
+	if sa.Account.UID != "" {
+		req.Header.Set("X-User-Id", sa.Account.UID)
+	}
+	req.Header.Set("X-Enterprise-Id", eid)
+	req.Header.Set("X-Tenant-Id", eid)
+	if sa.Auth.Domain != "" {
+		req.Header.Set("X-Domain", sa.Auth.Domain)
+	}
+
+	resp, err := hostHTTPDo(req)
+	if err != nil {
+		return nil, err
+	}
+	body := resp.Body
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("enterprise models API status %d", resp.StatusCode)
+	}
+	var apiResp struct {
+		Code int               `json:"code"`
+		Data []enterpriseModel `json:"data"`
+	}
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, err
+	}
+	if apiResp.Code != 0 {
+		return nil, fmt.Errorf("enterprise models API code %d", apiResp.Code)
+	}
+	var out []pluginapi.ModelInfo
+	for _, m := range apiResp.Data {
+		if strings.TrimSpace(m.ID) == "" {
+			continue
+		}
+		out = append(out, pluginapi.ModelInfo{
+			ID:                         m.ID,
+			Name:                       m.Name,
+			ContextLength:              0,
+			MaxCompletionTokens:        0,
+			OwnedBy:                    providerName,
+			SupportedGenerationMethods: []string{"chat"},
+		})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no enterprise models found")
+	}
+	return out, nil
+}
+
+// enterpriseModel is one entry of the /console/enterprises/{eid}/config/models
+// response array.
+type enterpriseModel struct {
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Vendor             string   `json:"vendor"`
+	SupportsToolCall   bool     `json:"supportsToolCall"`
+	SupportsImages     bool     `json:"supportsImages"`
+	DisabledMultiModel bool     `json:"disabledMultiModel"`
+	Tags               []string `json:"tags"`
 }
 
 func cacheModelAliases(host pluginapi.HostConfigSummary) {
@@ -405,7 +513,13 @@ func handleModelForAuth(raw []byte) ([]byte, error) {
 	// req.AuthProvider back would silently drop the model list whenever the
 	// auth file carries a non-canonical provider string.
 	cacheModelAliases(req.Host)
-	models := fetchDynamicModelsFromStorage(req.StorageJSON)
+	var sa *storedAuth
+	if len(req.StorageJSON) > 0 {
+		if parsed, err := parseStored(req.StorageJSON); err == nil {
+			sa = parsed
+		}
+	}
+	models := fetchDynamicModelsFromStorage(sa)
 	models = filterExcludedModels(models, req.Host)
 	return okEnvelope(pluginapi.ModelResponse{Provider: providerName, Models: models})
 }
