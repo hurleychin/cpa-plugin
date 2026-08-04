@@ -9,7 +9,8 @@
 // workbuddy.so binary (symbol table, string constants and RPC shape) published
 // by Sliverkiss. Original credit for the workbuddy plugin goes to Sliverkiss;
 // see https://github.com/Sliverkiss/cpa-plugin. Built with -buildmode=c-shared
-// and exports the cliproxy C ABI entry points.
+// and exports the cliproxy C ABI entry points. Maintained at
+// https://github.com/hurleychin/cpa-plugin.
 package main
 
 /*
@@ -342,8 +343,8 @@ func wbRegistration() registration {
 		Metadata: pluginapi.Metadata{
 			Name:             providerName,
 			Version:          version,
-			Author:           "Sliverkiss (based on workbuddy by lovingfish)",
-			GitHubRepository: "https://github.com/Sliverkiss/cpa-plugin",
+			Author:           "hurleychin",
+			GitHubRepository: "https://github.com/hurleychin/cpa-plugin",
 			Logo:             pluginLogoURL,
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "lifecycle_auto", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Auto disable CN / delete Global when enterprise quota exhausted; re-enable when the monthly cycle resets quota (default true)."},
