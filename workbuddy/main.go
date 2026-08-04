@@ -85,9 +85,14 @@ const (
 	// Global chat/auth gateway (iss = workbuddy.ai realm). APISIX on
 	// copilot.tencent.com rejects Global JWTs with 401; must use workbuddy.ai.
 	upstreamBaseGlobal  = "https://www.workbuddy.ai"
-	clientUA            = "CLI/2.63.2 CodeBuddy/2.63.2"
+	clientUA            = "CLI/" + clientVersion + " CodeBuddy/" + clientVersion
 	originReferer       = "https://www.codebuddy.cn"
 	originRefererGlobal = "https://www.workbuddy.ai"
+
+	// client version used for the client-identifying headers and User-Agent,
+	// kept in sync with the official CodeBuddy CLI so the billing/usage backend
+	// reports a known "client".
+	clientVersion = "2.124.0"
 
 	// CN endpoint aliases (login / chat / models). upstreamBaseCN is the only
 	// CN base; Global has its own upstreamBaseGlobal. No "upstreamBase" legacy
@@ -329,7 +334,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "0.8.2"
+var version = "0.8.6"
 
 func wbRegistration() registration {
 	return registration{
@@ -552,6 +557,7 @@ func backendHeaders(req *http.Request, sa *storedAuth) {
 	}
 	if sa.Account.EnterpriseID != "" {
 		req.Header.Set("X-Enterprise-Id", sa.Account.EnterpriseID)
+		req.Header.Set("X-Tenant-Id", sa.Account.EnterpriseID)
 	} else {
 		req.Header.Set("X-No-Enterprise-Id", "1")
 	}
@@ -569,12 +575,40 @@ func backendHeaders(req *http.Request, sa *storedAuth) {
 	// populate the "client" (客户端) field; without them requests show as empty.
 	req.Header.Set("X-IDE-Type", "CLI")
 	req.Header.Set("X-IDE-Name", "CLI")
-	req.Header.Set("X-IDE-Version", "2.63.2")
+	req.Header.Set("X-IDE-Version", clientVersion)
 	req.Header.Set("X-Agent-Intent", "craft")
-	req.Header.Set("X-Request-ID", randomHex(16))
-	req.Header.Set("X-Conversation-ID", randomHex(16))
-	req.Header.Set("X-Conversation-Request-ID", randomHex(16))
-	req.Header.Set("X-Conversation-Message-ID", randomHex(16))
+	req.Header.Set("X-Agent-Purpose", "conversation_topic")
+	req.Header.Set("X-Private-Data", "false")
+
+	// Conversation/request IDs mirror the official CodeBuddy CLI: the message
+	// ID doubles as the request ID, conversation IDs are unique per exchange.
+	conversationID := randomUUID()
+	requestID := randomHex(16)
+	req.Header.Set("X-Request-ID", requestID)
+	req.Header.Set("X-Conversation-ID", conversationID)
+	req.Header.Set("X-Conversation-Request-ID", requestID)
+	req.Header.Set("X-Conversation-Message-ID", requestID)
+
+	// Distributed tracing headers, matching the W3C/B3 format the CLI emits.
+	traceID := randomHex(16)
+	spanID := randomHex(8)
+	req.Header.Set("b3", traceID+"-"+spanID+"-1")
+	req.Header.Set("traceparent", "00-"+traceID+"-"+spanID+"-01")
+	req.Header.Set("X-Trace-Id", traceID)
+	req.Header.Set("X-B3-TraceId", traceID)
+	req.Header.Set("X-B3-SpanId", spanID)
+	req.Header.Set("X-B3-Sampled", "1")
+	req.Header.Set("X-CodeBuddy-Request", "1")
+
+	// stainless SDK headers the CLI ships with.
+	req.Header.Set("X-Stainless-Arch", "x64")
+	req.Header.Set("X-Stainless-Lang", "js")
+	req.Header.Set("X-Stainless-Os", "Windows")
+	req.Header.Set("X-Stainless-Package-Version", "6.25.0")
+	req.Header.Set("X-Stainless-Retry-Count", "0")
+	req.Header.Set("X-Stainless-Runtime", "node")
+	req.Header.Set("X-Stainless-Runtime-Version", "v24.3.0")
+
 	// Override Origin/Referer for Global accounts so the upstream doesn't
 	// reject the request as cross-origin.
 	origin := originRefererFor(sa)
@@ -590,6 +624,19 @@ func randomHex(n int) string {
 		return "0" + hex.EncodeToString([]byte(time.Now().Format("20060102150405")))
 	}
 	return hex.EncodeToString(b)
+}
+
+// randomUUID returns a v4-style UUID string (e.g. "8f3b...-...") used for
+// conversation IDs, matching the official CodeBuddy client.
+func randomUUID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%08x-%04x-4%03x-%04x-%012x",
+			time.Now().UnixNano(), time.Now().UnixNano()>>32&0xffff, 0, 0, 0)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // -----------------------------------------------------------------------------
