@@ -1,11 +1,10 @@
-# Multi-arch CPA plugin build & release (workbuddy).
-# Each plugin versions INDEPENDENTLY:
+# CPA plugin build & release (workbuddy, linux/amd64 only for fast builds).
 #   - tag 'workbuddy-v*'  → release workbuddy at that version
 #   - workflow_dispatch   → pick plugin + version manually
-#   - plain push/PR       → CI builds for both (artifacts only, no release)
+#   - plain push/PR       → CI builds (artifacts only, no release)
 #
 # Asset naming matches CLIProxyAPI pluginstore ArchiveName():
-#   <id>_<version>_<goos>_<goarch>.zip   (zip root: <id>.so|.dylib|.dll)
+#   <id>_<version>_<goos>_<goarch>.zip   (zip root: <id>.so)
 
 name: Build
 
@@ -63,32 +62,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # workbuddy native
+          # workbuddy native (linux/amd64 only for speed)
           - id: workbuddy
             goos: linux
             goarch: amd64
             runner: ubuntu-24.04
             ext: so
-          - id: workbuddy
-            goos: linux
-            goarch: arm64
-            runner: ubuntu-24.04-arm
-            ext: so
-          - id: workbuddy
-            goos: darwin
-            goarch: amd64
-            runner: macos-15-intel
-            ext: dylib
-          - id: workbuddy
-            goos: darwin
-            goarch: arm64
-            runner: macos-15
-            ext: dylib
-          - id: workbuddy
-            goos: windows
-            goarch: amd64
-            runner: windows-2025
-            ext: dll
     defaults:
       run:
         shell: bash
@@ -162,91 +141,6 @@ jobs:
             ${{ env.ARCHIVE_NAME }}.sha256
           if-no-files-found: error
 
-  build-cross:
-    name: ${{ matrix.id }} ${{ matrix.target }} (go-cross)
-    needs: test
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - id: workbuddy
-            target: windows-arm64
-            ext: dll
-          - id: workbuddy
-            target: freebsd-amd64
-            ext: so
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: ${{ matrix.id }}/go.mod
-          cache-dependency-path: ${{ matrix.id }}/go.sum
-
-      - name: Resolve release metadata
-        id: meta
-        run: |
-          set -euo pipefail
-          PLUGIN="${{ matrix.id }}"
-          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME}" == ${PLUGIN}-v* ]]; then
-            VERSION="${GITHUB_REF_NAME#${PLUGIN}-v}"
-          elif [ -n "${{ github.event.inputs.version }}" ] && [ "${{ github.event.inputs.plugin }}" == "${PLUGIN}" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="$(tr -d ' \n\r' < ${PLUGIN}/VERSION)"
-          fi
-          CLEAN_VERSION="${VERSION%%+*}"
-          GOOS_PART="${{ matrix.target }}"
-          echo "VERSION=${CLEAN_VERSION}" >> "${GITHUB_ENV}"
-          echo "version=${CLEAN_VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "ARCHIVE_NAME=${PLUGIN}_${CLEAN_VERSION}_${GOOS_PART%-*}_${GOOS_PART#*-}.zip" >> "${GITHUB_ENV}"
-          echo "LIB_NAME=${PLUGIN}.${{ matrix.ext }}" >> "${GITHUB_ENV}"
-
-      - name: Build cross shared library
-        timeout-minutes: 45
-        uses: go-cross/cgo-actions@v1
-        env:
-          GOFLAGS: -trimpath -buildmode=c-shared
-        with:
-          dir: ${{ matrix.id }}
-          packages: .
-          targets: ${{ matrix.target }}
-          out-dir: dist/${{ matrix.target }}
-          output: ${{ env.LIB_NAME }}
-          flags: -ldflags=-s -w
-          x-flags: main.version=${{ steps.meta.outputs.version }}
-
-      - name: Package plugin
-        run: |
-          set -euo pipefail
-          rm -f go-cross-bin.h "${{ matrix.id }}/dist/${{ matrix.target }}/${{ matrix.id }}.h" || true
-          LIB=""
-          for p in \
-            "${{ matrix.id }}/dist/${{ matrix.target }}/${LIB_NAME}" \
-            "dist/${{ matrix.target }}/${LIB_NAME}" \
-            "${{ matrix.id }}/dist/${LIB_NAME}"; do
-            if [ -f "$p" ]; then LIB="$p"; break; fi
-          done
-          if [ -z "$LIB" ]; then
-            echo "library not found"; find . -name '*.dll' -o -name '*.so' | head
-            exit 1
-          fi
-          go run ./.github/scripts/package-release.go \
-            -library "${LIB}" \
-            -archive "${ARCHIVE_NAME}" \
-            -checksum "${ARCHIVE_NAME}.sha256"
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.ARCHIVE_NAME }}
-          path: |
-            ${{ env.ARCHIVE_NAME }}
-            ${{ env.ARCHIVE_NAME }}.sha256
-          if-no-files-found: error
 
   release:
     name: Release
@@ -256,7 +150,6 @@ jobs:
       startsWith(github.ref, 'refs/tags/workbuddy-v')
     needs:
       - build
-      - build-cross
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -299,9 +192,7 @@ jobs:
             (cd out && sha256sum *.zip > checksums.txt)
           fi
           cat out/checksums.txt
-          for t in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64 windows_arm64; do
-            test -f "out/${PLUGIN}_${VERSION}_${t}.zip" || { echo "missing ${PLUGIN}_${VERSION}_${t}.zip"; exit 1; }
-          done
+          test -f "out/${PLUGIN}_${VERSION}_linux_amd64.zip" || { echo "missing ${PLUGIN}_${VERSION}_linux_amd64.zip"; exit 1; }
 
       - name: Sync registry.json version (this plugin only)
         env:
@@ -341,18 +232,12 @@ jobs:
           NOTES=$(cat <<EOF
           ## ${PLUGIN} CPA plugin v${VERSION}
 
-          Multi-arch builds for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) plugin store (\`github-release\` install type).
+          Linux amd64 build for [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) plugin store (\`github-release\` install type).
 
           ### Assets (pluginstore \`ArchiveName(id, version, goos, goarch)\`)
           | File | Contents |
           |---|---|
           | \`${PLUGIN}_${VERSION}_linux_amd64.zip\` | \`${PLUGIN}.so\` |
-          | \`${PLUGIN}_${VERSION}_linux_arm64.zip\` | \`${PLUGIN}.so\` |
-          | \`${PLUGIN}_${VERSION}_darwin_amd64.zip\` | \`${PLUGIN}.dylib\` |
-          | \`${PLUGIN}_${VERSION}_darwin_arm64.zip\` | \`${PLUGIN}.dylib\` |
-          | \`${PLUGIN}_${VERSION}_windows_amd64.zip\` | \`${PLUGIN}.dll\` |
-          | \`${PLUGIN}_${VERSION}_windows_arm64.zip\` | \`${PLUGIN}.dll\` |
-          | \`${PLUGIN}_${VERSION}_freebsd_amd64.zip\` | \`${PLUGIN}.so\` |
           | \`checksums.txt\` | SHA256 of zips |
 
           ### Manual install (linux/amd64 example)
