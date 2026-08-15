@@ -55,12 +55,11 @@ func fetchDynamicModelsFromStorage(sa *storedAuth) []pluginapi.ModelInfo {
 	if sa == nil || strings.TrimSpace(sa.Auth.AccessToken) == "" {
 		return wbModels()
 	}
-	accessToken := sa.Auth.AccessToken
 
 	// Merge the personal cli-agent model list with the enterprise account's
 	// custom-configured models. Enterprise models (custom:* IDs) are preferred
 	// and deduplicated against personal IDs.
-	personal, personalErr := callModelsAPI(accessToken)
+	personal, personalErr := callModelsAPI(sa)
 	enterprise, enterpriseErr := callEnterpriseModelsAPI(sa)
 
 	var out []pluginapi.ModelInfo
@@ -127,30 +126,45 @@ func isGlobalToken(accessToken string) bool {
 	return strings.Contains(strings.ToLower(claims.ISS), "workbuddy.ai")
 }
 
-// callModelsAPI GETs /console/enterprises/personal/models from the upstream.
-// Uses the shared client (connection pooling) with a per-request 15s budget;
-// the shared client's own 120s timeout stays as the outer bound.
-func callModelsAPI(accessToken string) ([]pluginapi.ModelInfo, error) {
+// callModelsAPI GETs /v3/config from the upstream and returns the cli
+// agent's model list. The cli agent models field is a plain string array (no
+// per-model detail object), so each id is enriched from the static wbModels
+// table when present. Uses the shared client (connection pooling) with a
+// per-request 15s budget; the shared client's own 120s timeout stays as the
+// outer bound.
+func callModelsAPI(sa *storedAuth) ([]pluginapi.ModelInfo, error) {
+	accessToken := sa.Auth.AccessToken
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	// Model discovery is per-realm: Global tokens must query workbuddy.ai,
 	// not copilot.tencent.com (which 500s for Global tokens). Decode JWT iss.
 	isGlobal := isGlobalToken(accessToken)
-	modelsURL := endpointModels
-	origin := originReferer
+	modelsURL := upstreamBaseCN + "/v3/config"
 	if isGlobal {
-		modelsURL = upstreamBaseGlobal + "/console/enterprises/personal/models"
-		origin = originRefererGlobal
+		modelsURL = upstreamBaseGlobal + "/v3/config"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Origin", origin)
-	req.Header.Set("Referer", origin+"/")
-	req.Header.Set("User-Agent", clientUA)
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("Connection", "close")
+	req.Header.Set("User-Agent", "WorkBuddy/5.3.13 WorkBuddy/5.3.13 CLI/2.115.0")
+	req.Header.Set("X-Request-ID", randomHex(16))
+	req.Header.Set("X-Product", "SaaS")
+	if sa.Account.UID != "" {
+		req.Header.Set("X-User-Id", sa.Account.UID)
+	}
+	if sa.Account.EnterpriseID != "" {
+		req.Header.Set("X-Enterprise-Id", sa.Account.EnterpriseID)
+		req.Header.Set("X-Tenant-Id", sa.Account.EnterpriseID)
+	}
+	if isGlobal {
+		req.Header.Set("X-Domain", "www.workbuddy.ai")
+	} else {
+		req.Header.Set("X-Domain", "www.workbuddy.cn")
+	}
 	resp, err := hostHTTPDo(req)
 	if err != nil {
 		return nil, err
@@ -162,24 +176,6 @@ func callModelsAPI(accessToken string) ([]pluginapi.ModelInfo, error) {
 	var apiResp struct {
 		Code int `json:"code"`
 		Data struct {
-			Models []struct {
-				ID                 string          `json:"id"`
-				Name               string          `json:"name"`
-				Description        string          `json:"description"`
-				Credits            string          `json:"credits"`
-				Configurable       bool            `json:"configurable"`
-				Configured         bool            `json:"configured"`
-				IsDefault          bool            `json:"isDefault"`
-				SupportsImages     bool            `json:"supportsImages"`
-				SupportsReasoning  bool            `json:"supportsReasoning"`
-				OnlyReasoning      bool            `json:"onlyReasoning"`
-				Reasoning          json.RawMessage `json:"reasoning"`
-				DisabledMultimodal bool            `json:"disabledMultimodal"`
-				Disabled           bool            `json:"disabled"`
-				DisabledReason     string          `json:"disabledReason"`
-				ContextWindow      json.RawMessage `json:"contextWindow"`
-				MaxTokens          json.RawMessage `json:"maxTokens"`
-			} `json:"models"`
 			Agents []struct {
 				Name   string   `json:"name"`
 				Models []string `json:"models"`
@@ -202,58 +198,28 @@ func callModelsAPI(accessToken string) ([]pluginapi.ModelInfo, error) {
 	if len(cliModelIDs) == 0 {
 		return nil, fmt.Errorf("no cli agent models found")
 	}
-	dynMap := make(map[string]struct {
-		ID                 string          `json:"id"`
-		Name               string          `json:"name"`
-		Description        string          `json:"description"`
-		Credits            string          `json:"credits"`
-		Configurable       bool            `json:"configurable"`
-		Configured         bool            `json:"configured"`
-		IsDefault          bool            `json:"isDefault"`
-		SupportsImages     bool            `json:"supportsImages"`
-		SupportsReasoning  bool            `json:"supportsReasoning"`
-		OnlyReasoning      bool            `json:"onlyReasoning"`
-		Reasoning          json.RawMessage `json:"reasoning"`
-		DisabledMultimodal bool            `json:"disabledMultimodal"`
-		Disabled           bool            `json:"disabled"`
-		DisabledReason     string          `json:"disabledReason"`
-		ContextWindow      json.RawMessage `json:"contextWindow"`
-		MaxTokens          json.RawMessage `json:"maxTokens"`
-	}, len(apiResp.Data.Models))
-	for _, m := range apiResp.Data.Models {
-		dynMap[m.ID] = m
+	static := make(map[string]pluginapi.ModelInfo, len(wbModels()))
+	for _, m := range wbModels() {
+		static[m.ID] = m
 	}
 	var out []pluginapi.ModelInfo
 	for _, id := range cliModelIDs {
-		m, ok := dynMap[id]
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		mi, ok := static[id]
 		if !ok {
-			continue
-		}
-		if m.Disabled {
-			continue
-		}
-		ctxLen := int64(0)
-		if len(m.ContextWindow) > 0 {
-			var v float64
-			if err := json.Unmarshal(m.ContextWindow, &v); err == nil {
-				ctxLen = int64(v)
+			mi = pluginapi.ModelInfo{
+				ID:                         id,
+				Name:                       id,
+				ContextLength:              1000000,
+				MaxCompletionTokens:        8192,
+				OwnedBy:                    providerName,
+				SupportedGenerationMethods: []string{"chat"},
 			}
 		}
-		maxTok := int64(0)
-		if len(m.MaxTokens) > 0 {
-			var v float64
-			if err := json.Unmarshal(m.MaxTokens, &v); err == nil {
-				maxTok = int64(v)
-			}
-		}
-		out = append(out, pluginapi.ModelInfo{
-			ID:                         m.ID,
-			Name:                       m.Name,
-			ContextLength:              ctxLen,
-			MaxCompletionTokens:        maxTok,
-			OwnedBy:                    providerName,
-			SupportedGenerationMethods: []string{"chat"},
-		})
+		out = append(out, mi)
 	}
 	return out, nil
 }

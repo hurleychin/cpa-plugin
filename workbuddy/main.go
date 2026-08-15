@@ -107,7 +107,6 @@ const (
 	endpointAuthToken    = upstreamBaseCN + "/v2/plugin/auth/token?state="
 	endpointTokenRefresh = upstreamBaseCN + "/v2/plugin/auth/token/refresh"
 	endpointChat         = upstreamBaseCN + "/v2/chat/completions"
-	endpointModels       = upstreamBaseCN + "/console/enterprises/personal/models"
 
 	loginTTL = 5 * time.Minute
 )
@@ -339,7 +338,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "1.0.0"
+var version = "1.0.1"
 
 func wbRegistration() registration {
 	return registration{
