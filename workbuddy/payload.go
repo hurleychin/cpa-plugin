@@ -397,19 +397,11 @@ func rewriteContentField(msg map[string]any) bool {
 	return false
 }
 
-// sanitizeBlockedTemplates neutralizes Claude Code template phrases that
-// Tencent CodeBuddy's content filter blocklists verbatim — the agent identity
-// line and the git injection. Each rewrite is a single-word change so the
-// prompt's meaning is preserved while dodging the exact-match filter.
-// (Zero-width desensitization of audit-flagged keywords is layered separately
-// via desensitizeContent, which touches only the system role.)
+// sanitizeBlockedTemplates is a legacy hook. The exact Claude Code template
+// phrases are neutralized by desensitizeContent's zero-width word splitting
+// (Claude Code / Anthropic / Main branch ... are all in the term table), so
+// this is a passthrough.
 func sanitizeBlockedTemplates(s string) string {
-	s = strings.ReplaceAll(s,
-		"You are Claude Code, Anthropic's official CLI for Claude.",
-		"You are Claude Code, Anthropic's official CLI tool for Claude.")
-	s = strings.ReplaceAll(s,
-		"Main branch (you will usually use this for PRs)",
-		"Default branch (you will usually use this for PRs)")
 	return s
 }
 

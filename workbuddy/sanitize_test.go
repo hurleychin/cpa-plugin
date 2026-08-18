@@ -1,24 +1,34 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSanitizeBlockedTemplates_ClaudeCode(t *testing.T) {
 	in := "You are Claude Code, Anthropic's official CLI for Claude."
 	out := sanitizeBlockedTemplates(in)
-	if out == in {
-		t.Fatal("should replace blocked template")
+	if out != in {
+		t.Fatalf("legacy sanitizeBlockedTemplates is a passthrough, got %q", out)
 	}
-	want := "You are Claude Code, Anthropic's official CLI tool for Claude."
-	if out != want {
-		t.Fatalf("got %q want %q", out, want)
+	zw := desensitizeText(in)
+	if zw == in {
+		t.Fatal("desensitizeText should split Claude Code / Anthropic with ZWSP")
+	}
+	if !strings.Contains(zw, "\u200b") {
+		t.Fatalf("expected ZWSP in output, got %q", zw)
 	}
 }
 
 func TestSanitizeBlockedTemplates_MainBranch(t *testing.T) {
 	in := "Main branch (you will usually use this for PRs)"
 	out := sanitizeBlockedTemplates(in)
-	if out == in {
-		t.Fatal("should replace Main branch")
+	if out != in {
+		t.Fatalf("legacy sanitizeBlockedTemplates is a passthrough, got %q", out)
+	}
+	zw := desensitizeText(in)
+	if zw == in {
+		t.Fatal("desensitizeText should split Main branch phrase with ZWSP")
 	}
 }
 
