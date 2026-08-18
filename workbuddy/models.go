@@ -96,7 +96,13 @@ func fetchDynamicModelsFromStorage(sa *storedAuth) []pluginapi.ModelInfo {
 		}
 		return wbModels()
 	}
-	storeDynamicModels(out)
+	if personalErr == nil && enterpriseErr == nil {
+		// Only cache the fully-fetched merge. When either upstream call
+		// failed, the merged list is incomplete (e.g. missing the enterprise
+		// custom:* models); returning it uncached lets the next model query
+		// retry immediately instead of serving a partial list for 5 minutes.
+		storeDynamicModels(out)
+	}
 	return out
 }
 
