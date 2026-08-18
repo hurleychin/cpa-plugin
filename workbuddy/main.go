@@ -97,7 +97,7 @@ const (
 	// client version used for the client-identifying headers and User-Agent,
 	// kept in sync with the official CodeBuddy CLI so the billing/usage backend
 	// reports a known "client".
-	clientVersion = "2.124.0"
+	clientVersion = "2.137.1"
 
 	// CN endpoint aliases (login / chat / models). upstreamBaseCN is the only
 	// CN base; Global has its own upstreamBaseGlobal. No "upstreamBase" legacy
@@ -338,7 +338,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "1.0.4"
+var version = "1.0.5"
 
 func wbRegistration() registration {
 	return registration{
@@ -581,6 +581,7 @@ func backendHeaders(req *http.Request, sa *storedAuth) {
 	req.Header.Set("X-IDE-Version", clientVersion)
 	req.Header.Set("X-Agent-Intent", "craft")
 	req.Header.Set("X-Agent-Purpose", "conversation_topic")
+	req.Header.Set("X-Agent-Type", "main")
 	req.Header.Set("X-Private-Data", "false")
 
 	// Conversation/request IDs mirror the official CodeBuddy CLI: the message
@@ -606,7 +607,7 @@ func backendHeaders(req *http.Request, sa *storedAuth) {
 	// stainless SDK headers the CLI ships with.
 	req.Header.Set("X-Stainless-Arch", "x64")
 	req.Header.Set("X-Stainless-Lang", "js")
-	req.Header.Set("X-Stainless-Os", "Windows")
+	req.Header.Set("X-Stainless-Os", "Linux")
 	req.Header.Set("X-Stainless-Package-Version", "6.25.0")
 	req.Header.Set("X-Stainless-Retry-Count", "0")
 	req.Header.Set("X-Stainless-Runtime", "node")
