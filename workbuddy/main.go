@@ -339,7 +339,7 @@ type registrationCapability struct {
 }
 
 // version is injected at build time via -ldflags "-X main.version=...".
-var version = "1.0.6"
+var version = "1.0.7"
 
 func wbRegistration() registration {
 	return registration{
@@ -357,6 +357,8 @@ func wbRegistration() registration {
 				{Name: "scheduler_mode", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{schedulerModeOff, schedulerModeCredits}, Description: "Multi-account selection: off (defer to built-in, default) or credits (pick highest remaining). WARNING: when off + lifecycle_auto=false, exhausted accounts may still be routed — enable lifecycle_auto or set scheduler_mode=credits."},
 				{Name: "usage_report_url", Type: pluginapi.ConfigFieldTypeString, Description: "Optional override of CPAMP usage import URL (default http://cpa-manager-plus:18317/v0/management/usage/import; also env USAGE_REPORT_URL)."},
 				{Name: "usage_report_key", Type: pluginapi.ConfigFieldTypeString, Description: "Optional CPAMP admin key override. Prefer auto-detect from env CPAMP_ADMIN_KEY / USAGE_REPORT_KEY or secret file /run/secrets/cpamp_admin_key."},
+				{Name: "trace_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable session tracing: writes JSONL to trace_dir with per-request session correlation and outbound headers. Independent of CPA request-log (default false)."},
+				{Name: "trace_dir", Type: pluginapi.ConfigFieldTypeString, Description: "Directory for session trace files when trace_enabled is true (default /root/cliproxyapi/logs/workbuddy-trace)."},
 			},
 		},
 		Capabilities: registrationCapability{
@@ -560,22 +562,13 @@ type chatSession struct {
 }
 
 // newChatSession derives a chatSession from the incoming executor request
-// headers. Recognized session headers match the host's own session-affinity
-// extractors so both layers agree on the session identity.
-func newChatSession(headers http.Header) chatSession {
-	sid := strings.TrimSpace(headers.Get("X-Claude-Code-Session-Id"))
-	if sid == "" {
-		sid = strings.TrimSpace(headers.Get("X-Session-ID"))
-	}
-	if sid == "" {
-		sid = strings.TrimSpace(headers.Get("Session-Id"))
-	}
-	if sid == "" {
-		sid = strings.TrimSpace(headers.Get("X-Session-Affinity"))
-	}
-	if sid == "" {
-		sid = strings.TrimSpace(headers.Get("X-Client-Request-Id"))
-	}
+// headers and body. Recognized session identifiers match the host's own
+// session-affinity extractors so both layers agree on the session identity:
+// Claude Code (X-Claude-Code-Session-Id), Codex (Session-Id / Session_id),
+// OpenCode (X-Session-Affinity), pi (X-Client-Request-Id), plus body
+// session_id / prompt_cache_key / conversation_id.
+func newChatSession(headers http.Header, payload []byte) chatSession {
+	sid := allSessionCandidates(headers, payload)
 	if sid == "" {
 		return chatSession{purpose: "conversation_topic"}
 	}
@@ -830,7 +823,21 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	backendHeaders(httpReq, sa, newChatSession(req.Headers))
+	sess := newChatSession(req.Headers, req.Payload)
+	backendHeaders(httpReq, sa, sess)
+	// Trace: capture how this request was correlated to an upstream session
+	// and which outbound headers were actually sent. Independent of CPA logs.
+	writeSessionTrace(traceLine{
+		Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
+		Model:         req.Model,
+		SessionHeader: allSessionCandidates(req.Headers, req.Payload),
+		BodySession:   sessionIDFromBody(req.Payload),
+		Purpose:       sess.purpose,
+		ConvID:        sess.id,
+		ParentSpan:    sess.parentSpanID,
+		CodebuddyReq:  sess.codebuddyReq,
+		Headers:       filterTraceHeaders(httpReq.Header),
+	})
 	// Compliance: route via host.http.do_stream so request-log captures the
 	// outbound call. Read entire body via the bridge, then fold SSE → completion.
 	stream, statusCode, _, err := hostHTTPDoStream(httpReq)
@@ -891,8 +898,19 @@ func handleExecStream(raw []byte) ([]byte, error) {
 
 	// No async stream id → fall back to synchronous chunk collection.
 	if req.StreamID == "" {
+		sess := newChatSession(req.Headers, req.Payload)
+		writeSessionTrace(traceLine{
+			Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
+			Model:         req.Model,
+			SessionHeader: allSessionCandidates(req.Headers, req.Payload),
+			BodySession:   sessionIDFromBody(req.Payload),
+			Purpose:       sess.purpose,
+			ConvID:        sess.id,
+			ParentSpan:    sess.parentSpanID,
+			CodebuddyReq:  sess.codebuddyReq,
+		})
 		collector := &sseUsageCollector{}
-		chunks, statusCode, errCollect := collectUpstreamStream(body, sa, req.Headers, sseFramed, collector)
+		chunks, statusCode, errCollect := collectUpstreamStream(body, sa, req.Headers, sess, sseFramed, collector)
 		if errCollect != nil {
 			publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, statusCode, errCollect.Error())
 			return nil, errCollect
@@ -915,7 +933,21 @@ func handleExecStream(raw []byte) ([]byte, error) {
 		streamClose(req.StreamID)
 		return okEnvelope(streamResponse{Headers: headers})
 	}
-	backendHeaders(httpReq, sa, newChatSession(req.Headers))
+	sess := newChatSession(req.Headers, req.Payload)
+	backendHeaders(httpReq, sa, sess)
+	// Trace: capture how this streaming request was correlated to an upstream
+	// session and which outbound headers were actually sent.
+	writeSessionTrace(traceLine{
+		Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
+		Model:         req.Model,
+		SessionHeader: allSessionCandidates(req.Headers, req.Payload),
+		BodySession:   sessionIDFromBody(req.Payload),
+		Purpose:       sess.purpose,
+		ConvID:        sess.id,
+		ParentSpan:    sess.parentSpanID,
+		CodebuddyReq:  sess.codebuddyReq,
+		Headers:       filterTraceHeaders(httpReq.Header),
+	})
 	go pumpUpstreamStream(httpReq, cancel, req.StreamID, sseFramed, req.Model, upstreamModel, authUID, started, req.AuthID)
 	return okEnvelope(streamResponse{Headers: headers})
 }

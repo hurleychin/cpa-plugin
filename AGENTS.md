@@ -30,6 +30,13 @@ Repo: `cpa-plugin` (fork `hurleychin/cpa-plugin`, upstream `Sliverkiss/cpa-plugi
 - `payload.go` `sanitizeBlockedTemplates` is now a passthrough; exact phrase rewrites were removed. The term table is the single source of truth. Terms ending in `)` (e.g. the old `Main branch (…)`) do NOT work with the `\b` regex — add plain two-word terms like `Main branch` instead.
 - When auditing sensitivity, test against upstream `hy3`, not `custom:deepseek-v4-flash`.
 
+## Session correlation & trace
+
+- Each chat request is correlated to an upstream conversation via the incoming session identifier. Recognized sources (host-compatible priority order, first non-empty wins): `X-Claude-Code-Session-Id` (Claude Code), `Session-Id` / `Session_id` (Codex), `X-Session-ID`, `X-Session-Affinity` (OpenCode), `X-Client-Request-Id` (pi), then body `session_id` / `sessionId` / `prompt_cache_key` / `conversation_id` (OpenAI/Responses).
+- When a session id is present the request is a continuation: stable sha256-derived v4-UUID conversation id, `X-Agent-Purpose: conversation`, 4-part `b3` + `X-B3-ParentSpanId` (continuation parent), `X-CodeBuddy-Request: 1`. Without one it's a fresh topic: random ids, `conversation_topic`, 3-part `b3`, no codebuddy-request. See `newChatSession` / `allSessionCandidates` / `sessionIDFromBody` (trace.go, main.go).
+- Session tracing is a **plugin config option**, independent of CPA's request-log/debug. Enable `trace_enabled: true` under `plugins.configs.workbuddy` (optionally `trace_dir`); the plugin writes JSONL to `trace_dir/session-trace.jsonl` (default `/root/cliproxyapi/logs/workbuddy-trace`). Each line records session correlation + redacted outbound headers. Default is off.
+- Gotchas: `ExecutorRequest` has **no RequestID field** (don't reference it); trace outbound headers only via `filterTraceHeaders` (redacts Authorization, keeps correlation headers).
+
 ## Gotchas
 
 - `gofmt`/`go` may not be on PATH: prefix `export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin`.

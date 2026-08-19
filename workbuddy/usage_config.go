@@ -94,6 +94,7 @@ func configure(raw []byte) {
 					nextKeepaliveAuto = v == "true" || v == "1" || v == "yes" || v == "on"
 				}
 			}
+			applyTraceConfig(strings.Split(string(req.ConfigYAML), "\n"))
 		}
 	}
 
