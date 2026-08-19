@@ -137,12 +137,12 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 // the upstream, clean each chunk, return them as a slice. The collector, when
 // non-nil, observes raw upstream chunks for usage extraction. statusCode is the
 // upstream HTTP status (0 for transport-level failures).
-func collectUpstreamStream(body []byte, sa *storedAuth, sseFramed bool, collector *sseUsageCollector) ([]pluginapi.ExecutorStreamChunk, int, error) {
+func collectUpstreamStream(body []byte, sa *storedAuth, headers http.Header, sseFramed bool, collector *sseUsageCollector) ([]pluginapi.ExecutorStreamChunk, int, error) {
 	httpReq, err := http.NewRequest(http.MethodPost, endpointChatFor(sa), bytes.NewReader(body))
 	if err != nil {
 		return nil, 0, err
 	}
-	backendHeaders(httpReq, sa)
+	backendHeaders(httpReq, sa, newChatSession(headers))
 	// Compliance: route via host.http.do_stream so request-log captures the call.
 	stream, statusCode, _, err := hostHTTPDoStream(httpReq)
 	if err != nil {
