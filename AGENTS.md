@@ -22,6 +22,7 @@ Repo: `cpa-plugin` (fork `hurleychin/cpa-plugin`, upstream `Sliverkiss/cpa-plugi
 - `models.go` `fetchDynamicModelsFromStorage` merges the personal cli-agent model list (from `copilot.tencent.com/v3/config`) with enterprise `custom:*` models (from `/console/enterprises/<eid>/config/models`).
 - Personal list uses WorkBuddy client headers (`User-Agent: WorkBuddy/5.3.13 ...`, `X-User-Id`, `X-Enterprise-Id`, `X-Tenant-Id`, `X-Domain: www.workbuddy.cn`); the cli agent's `models` field is a plain string array enriched from the static `wbModels()` table.
 - Results cached globally for 5 min. **A partial merge (either fetch failed) is NOT cached**, so the next model query retries — don't reintroduce caching of incomplete merges.
+- The static `wbModels()` table is the **fallback** when the upstream fetch fails. If a real upstream model is missing from `/v1/models`, add it to `wbModels()` so it always shows (e.g. `glm-5.3-flash` was added there after it vanished during a transient fetch failure). Keep `wbModels()` in sync with the upstream cli-agent list; it is NOT auto-populated.
 
 ## Upstream content-audit desensitization
 
