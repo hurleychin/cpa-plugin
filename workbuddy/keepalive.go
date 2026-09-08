@@ -78,7 +78,7 @@ func refreshCall(sa *storedAuth) (json.RawMessage, []byte, int, error) {
 	if sa.Account.EnterpriseID != "" {
 		req.Header.Set("X-Enterprise-Id", sa.Account.EnterpriseID)
 	}
-	req.Header.Set("X-Auth-Refresh-Source", providerName)
+	req.Header.Set("X-Auth-Refresh-Source", "plugin")
 	resp, err := hostHTTPDo(req)
 	if err != nil {
 		return nil, nil, 0, err
