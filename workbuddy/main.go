@@ -71,6 +71,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -626,29 +627,34 @@ func backendHeaders(req *http.Request, sa *storedAuth, sess chatSession) {
 	req.Header.Set("X-Product", "SaaS")
 	// Client-identifying headers. Tencent's billing/usage backend uses these to
 	// populate the "client" (客户端) field; without them requests show as empty.
-	req.Header.Set("X-IDE-Type", "CLI")
-	req.Header.Set("X-IDE-Name", "CLI")
-	req.Header.Set("X-IDE-Version", clientVersion)
-	req.Header.Set("X-Agent-Intent", "craft")
-	req.Header.Set("X-Agent-Purpose", sess.purpose)
-	req.Header.Set("X-Agent-Type", "main")
+	// Wire-case alignment with the real CLI (see setWireHeader): several of
+	// these differ from Go's canonical form ("X-Request-ID", "X-IDE-*",
+	// "X-B3-ParentSpanId", all-lowercase stainless / x-codebuddy-request).
+	setWireHeader(req.Header, "X-IDE-Type", "CLI")
+	setWireHeader(req.Header, "X-IDE-Name", "CLI")
+	setWireHeader(req.Header, "X-IDE-Version", clientVersion)
+	setWireHeader(req.Header, "X-Agent-Intent", "craft")
+	setWireHeader(req.Header, "X-Agent-Purpose", sess.purpose)
+	setWireHeader(req.Header, "X-Agent-Type", "main")
+	setWireHeader(req.Header, "x-requested-with", "XMLHttpRequest")
 
 	// Conversation/request IDs mirror the official CodeBuddy CLI: the message
 	// ID doubles as the request ID, and every call is a turn start so the
 	// root request id equals the conversation request id (self-rooted).
-	// The conversation id is unique per exchange (stable per client session
-	// when one is present).
+	// IDs are time-ordered like the CLI's (burst-stable prefix + random
+	// tail). The conversation id is unique per exchange (stable per client
+	// session when one is present).
 	conversationID := sess.id
 	if conversationID == "" {
-		conversationID = randomUUID()
+		conversationID = orderedConvPrefix() + "-" + randomHex(2) + "-" + randomHex(2) + "-" + randomHex(2) + "-" + randomHex(6)
 	}
-	requestID := randomHex(16)
-	conversationRequestID := randomHex(16)
-	req.Header.Set("X-Request-ID", requestID)
-	req.Header.Set("X-Conversation-ID", conversationID)
-	req.Header.Set("X-Conversation-Request-ID", conversationRequestID)
-	req.Header.Set("X-Root-Request-ID", conversationRequestID)
-	req.Header.Set("X-Conversation-Message-ID", requestID)
+	requestID := orderedHexID()
+	conversationRequestID := orderedHexID()
+	setWireHeader(req.Header, "X-Request-ID", requestID)
+	setWireHeader(req.Header, "X-Conversation-ID", conversationID)
+	setWireHeader(req.Header, "X-Conversation-Request-ID", conversationRequestID)
+	setWireHeader(req.Header, "X-Root-Request-ID", conversationRequestID)
+	setWireHeader(req.Header, "X-Conversation-Message-ID", requestID)
 
 	// Distributed tracing headers, matching the W3C/B3 format the CLI emits.
 	// Every call is a turn start: fresh trace/span plus a fresh parent span
@@ -658,23 +664,23 @@ func backendHeaders(req *http.Request, sa *storedAuth, sess chatSession) {
 	traceID := randomHex(16)
 	spanID := randomHex(8)
 	parentSpanID := randomHex(8)
-	req.Header.Set("b3", traceID+"-"+spanID+"-1-"+parentSpanID)
-	req.Header.Set("X-B3-ParentSpanId", parentSpanID)
-	req.Header.Set("traceparent", "00-"+traceID+"-"+spanID+"-01")
-	req.Header.Set("X-Trace-Id", traceID)
-	req.Header.Set("X-B3-TraceId", traceID)
-	req.Header.Set("X-B3-SpanId", spanID)
+	setWireHeader(req.Header, "b3", traceID+"-"+spanID+"-1-"+parentSpanID)
+	setWireHeader(req.Header, "X-B3-ParentSpanId", parentSpanID)
+	setWireHeader(req.Header, "traceparent", "00-"+traceID+"-"+spanID+"-01")
+	setWireHeader(req.Header, "X-Trace-ID", traceID)
+	setWireHeader(req.Header, "X-B3-TraceId", traceID)
+	setWireHeader(req.Header, "X-B3-SpanId", spanID)
 	req.Header.Set("X-B3-Sampled", "1")
-	req.Header.Set("X-CodeBuddy-Request", "1")
+	setWireHeader(req.Header, "x-codebuddy-request", "1")
 
-	// stainless SDK headers the CLI ships with.
-	req.Header.Set("X-Stainless-Arch", "x64")
-	req.Header.Set("X-Stainless-Lang", "js")
-	req.Header.Set("X-Stainless-Os", "Windows")
-	req.Header.Set("X-Stainless-Package-Version", "6.25.0")
-	req.Header.Set("X-Stainless-Retry-Count", "0")
-	req.Header.Set("X-Stainless-Runtime", "node")
-	req.Header.Set("X-Stainless-Runtime-Version", "v26.3.0")
+	// stainless SDK headers the CLI ships with (all lowercase on the wire).
+	setWireHeader(req.Header, "x-stainless-arch", "x64")
+	setWireHeader(req.Header, "x-stainless-lang", "js")
+	setWireHeader(req.Header, "x-stainless-os", "Windows")
+	setWireHeader(req.Header, "x-stainless-package-version", "6.25.0")
+	setWireHeader(req.Header, "x-stainless-retry-count", "0")
+	setWireHeader(req.Header, "x-stainless-runtime", "node")
+	setWireHeader(req.Header, "x-stainless-runtime-version", "v26.3.0")
 
 	// Override Origin/Referer for Global accounts so the upstream doesn't
 	// reject the request as cross-origin.
@@ -683,14 +689,65 @@ func backendHeaders(req *http.Request, sa *storedAuth, sess chatSession) {
 	req.Header.Set("Referer", origin+"/")
 }
 
-// randomHex returns n random bytes hex-encoded. CodeBuddy conversation/request
-// IDs are 32-char hex strings; this keeps them UUID-free but stable enough.
+// randomHex returns n random bytes hex-encoded, used for trace/span IDs.
 func randomHex(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
 		return "0" + hex.EncodeToString([]byte(time.Now().Format("20060102150405")))
 	}
 	return hex.EncodeToString(b)
+}
+
+// idSeq orders IDs generated within the same millisecond.
+var idSeq atomic.Uint64
+
+// orderedHexID returns a 32-char hex request-style ID shaped like the real
+// CodeBuddy CLI's: a burst-stable, monotonically increasing time prefix
+// followed by random tail (e.g. "01a07f8a5c99..."). The exact epoch encoding
+// of the CLI's prefix couldn't be derived from captures, so we use the low
+// 40 bits of unix millis plus a per-process sequence — structurally identical
+// (stable within a burst, increasing across calls) with zero collision risk.
+func orderedHexID() string {
+	ms := uint64(time.Now().UnixMilli()) & 0xFFFFFFFFFF
+	seq := idSeq.Add(1) & 0xFF
+	var tail [10]byte
+	if _, err := rand.Read(tail[:]); err != nil {
+		return fmt.Sprintf("%010x%02x%x", ms, seq, time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%010x%02x%s", ms, seq, hex.EncodeToString(tail[:]))
+}
+
+// orderedConvPrefix returns the 8-hex time prefix for one-shot conversation
+// IDs, mirroring the CLI's batch-stable first group (e.g. "01a07f8a-...").
+func orderedConvPrefix() string {
+	return fmt.Sprintf("%08x", uint64(time.Now().UnixMilli()>>8)&0xFFFFFFFF)
+}
+
+// setWireHeader stores a header under its exact wire-case key. http.Header.Set
+// would CanonicalMIME-ize it ("X-Request-ID" → "X-Request-Id",
+// "X-IDE-Version" → "X-Ide-Version", "x-codebuddy-request" →
+// "X-Codebuddy-Request"), which no longer matches the real CLI. Direct map
+// assignment is written to the wire literally by the transport/bridge.
+func setWireHeader(h http.Header, key, value string) {
+	if c := http.CanonicalHeaderKey(key); c != key {
+		delete(h, c)
+	}
+	h[key] = []string{value}
+}
+
+// wireHeader reads a header stored under its exact wire-case key, falling
+// back to the canonical form. Needed because Header.Get canonicalizes the
+// lookup and would miss setWireHeader entries.
+func wireHeader(h http.Header, key string) string {
+	if vs, ok := h[key]; ok && len(vs) > 0 {
+		return vs[0]
+	}
+	if c := http.CanonicalHeaderKey(key); c != key {
+		if vs, ok := h[c]; ok && len(vs) > 0 {
+			return vs[0]
+		}
+	}
+	return ""
 }
 
 // randomUUID returns a v4-style UUID string (e.g. "8f3b...-...") used for
@@ -831,8 +888,8 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		BodySession:   sessionIDFromBody(req.Payload),
 		Purpose:       sess.purpose,
 		ConvID:        sess.id,
-		ParentSpan:    httpReq.Header.Get("X-B3-ParentSpanId"),
-		CodebuddyReq:  httpReq.Header.Get("X-CodeBuddy-Request") == "1",
+		ParentSpan:    wireHeader(httpReq.Header, "X-B3-ParentSpanId"),
+		CodebuddyReq:  wireHeader(httpReq.Header, "x-codebuddy-request") == "1",
 		Headers:       filterTraceHeaders(httpReq.Header),
 	})
 	// Compliance: route via host.http.do_stream so request-log captures the
@@ -948,8 +1005,8 @@ func handleExecStream(raw []byte) ([]byte, error) {
 		BodySession:   sessionIDFromBody(req.Payload),
 		Purpose:       sess.purpose,
 		ConvID:        sess.id,
-		ParentSpan:    httpReq.Header.Get("X-B3-ParentSpanId"),
-		CodebuddyReq:  httpReq.Header.Get("X-CodeBuddy-Request") == "1",
+		ParentSpan:    wireHeader(httpReq.Header, "X-B3-ParentSpanId"),
+		CodebuddyReq:  wireHeader(httpReq.Header, "x-codebuddy-request") == "1",
 		Headers:       filterTraceHeaders(httpReq.Header),
 	})
 	go pumpUpstreamStream(httpReq, cancel, req.StreamID, sseFramed, req.Model, upstreamModel, authUID, started, req.AuthID)

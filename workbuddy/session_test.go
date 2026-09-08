@@ -84,43 +84,93 @@ func TestBackendHeadersTurnShape(t *testing.T) {
 	}()} {
 		req, _ := http.NewRequest(http.MethodPost, "https://copilot.tencent.com/v2/chat/completions", nil)
 		backendHeaders(req, &storedAuth{}, newChatSession(h, nil))
-		if got := req.Header.Get("X-Agent-Purpose"); got != "conversation" {
+		hdr := req.Header
+		if got := wireHeader(hdr, "X-Agent-Purpose"); got != "conversation" {
 			t.Fatalf("X-Agent-Purpose = %q, want conversation", got)
 		}
-		convReq := req.Header.Get("X-Conversation-Request-ID")
+		convReq := wireHeader(hdr, "X-Conversation-Request-ID")
 		if convReq == "" {
 			t.Fatal("X-Conversation-Request-ID missing")
 		}
-		if got := req.Header.Get("X-Root-Request-ID"); got != convReq {
+		if len(convReq) != 32 {
+			t.Fatalf("X-Conversation-Request-ID = %q, want 32 hex", convReq)
+		}
+		if got := wireHeader(hdr, "X-Root-Request-ID"); got != convReq {
 			t.Fatalf("X-Root-Request-ID = %q, want self-root %q", got, convReq)
 		}
-		if req.Header.Get("X-Request-ID") != req.Header.Get("X-Conversation-Message-ID") {
+		if wireHeader(hdr, "X-Request-ID") != wireHeader(hdr, "X-Conversation-Message-ID") {
 			t.Fatal("X-Request-ID must equal X-Conversation-Message-ID")
 		}
-		parent := req.Header.Get("X-B3-ParentSpanId")
+		parent := wireHeader(hdr, "X-B3-ParentSpanId")
 		if parent == "" {
 			t.Fatal("X-B3-ParentSpanId missing")
 		}
-		span := req.Header.Get("X-B3-SpanId")
-		trace := req.Header.Get("X-B3-TraceId")
-		if want := trace + "-" + span + "-1-" + parent; req.Header.Get("b3") != want {
-			t.Fatalf("b3 = %q, want %q", req.Header.Get("b3"), want)
+		span := wireHeader(hdr, "X-B3-SpanId")
+		trace := wireHeader(hdr, "X-B3-TraceId")
+		if want := trace + "-" + span + "-1-" + parent; wireHeader(hdr, "b3") != want {
+			t.Fatalf("b3 = %q, want %q", wireHeader(hdr, "b3"), want)
 		}
-		if got := req.Header.Get("X-CodeBuddy-Request"); got != "1" {
-			t.Fatalf("X-CodeBuddy-Request = %q, want 1", got)
+		if got := wireHeader(hdr, "x-codebuddy-request"); got != "1" {
+			t.Fatalf("x-codebuddy-request = %q, want 1", got)
 		}
-		if _, ok := req.Header["X-Private-Data"]; ok {
+		if _, ok := hdr["X-Private-Data"]; ok {
 			t.Fatal("X-Private-Data must not be sent")
 		}
-		if got := req.Header.Get("X-IDE-Version"); got != "2.147.0" {
+		if got := wireHeader(hdr, "X-IDE-Version"); got != "2.147.0" {
 			t.Fatalf("X-IDE-Version = %q, want 2.147.0", got)
 		}
-		if got := req.Header.Get("X-Stainless-Os"); got != "Windows" {
-			t.Fatalf("X-Stainless-Os = %q, want Windows", got)
+		if got := wireHeader(hdr, "x-stainless-os"); got != "Windows" {
+			t.Fatalf("x-stainless-os = %q, want Windows", got)
 		}
-		if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "v26.3.0" {
-			t.Fatalf("X-Stainless-Runtime-Version = %q, want v26.3.0", got)
+		if got := wireHeader(hdr, "x-stainless-runtime-version"); got != "v26.3.0" {
+			t.Fatalf("x-stainless-runtime-version = %q, want v26.3.0", got)
 		}
+	}
+}
+
+func TestBackendHeadersWireCase(t *testing.T) {
+	// Trace fidelity: the recorded map keys must equal the exact wire case,
+	// otherwise the trace cannot be compared against real CLI captures.
+	req, _ := http.NewRequest(http.MethodPost, "https://copilot.tencent.com/v2/chat/completions", nil)
+	backendHeaders(req, &storedAuth{}, newChatSession(http.Header{}, nil))
+	for _, k := range []string{
+		"X-Request-ID", "X-Conversation-ID", "X-Conversation-Request-ID",
+		"X-Root-Request-ID", "X-Conversation-Message-ID",
+		"X-IDE-Type", "X-IDE-Name", "X-IDE-Version",
+		"X-B3-ParentSpanId", "X-B3-TraceId", "X-B3-SpanId", "X-Trace-ID",
+		"b3", "traceparent", "x-codebuddy-request",
+		"x-requested-with", "x-stainless-arch", "x-stainless-lang",
+		"x-stainless-os", "x-stainless-package-version", "x-stainless-retry-count",
+		"x-stainless-runtime", "x-stainless-runtime-version",
+	} {
+		if _, ok := req.Header[k]; !ok {
+			t.Fatalf("header map missing exact wire-case key %q (keys: %v)", k, req.Header)
+		}
+	}
+	// No canonicalized duplicates may remain.
+	for _, k := range []string{
+		"X-Request-Id", "X-Conversation-Id", "X-Ide-Version",
+		"X-B3-Parentspanid", "X-B3-Traceid", "X-Codebuddy-Request",
+		"X-Stainless-Os", "X-Requested-With", "B3", "Traceparent",
+	} {
+		if _, ok := req.Header[k]; ok {
+			t.Fatalf("stale canonical key %q must not remain", k)
+		}
+	}
+}
+
+func TestOrderedHexIDMonotonic(t *testing.T) {
+	a, b, c := orderedHexID(), orderedHexID(), orderedHexID()
+	for _, id := range []string{a, b, c} {
+		if len(id) != 32 {
+			t.Fatalf("ordered id %q wrong length", id)
+		}
+	}
+	if !(a < b && b < c) {
+		t.Fatalf("ordered ids not monotonic: %q %q %q", a, b, c)
+	}
+	if a[:10] != b[:10] || b[:10] != c[:10] {
+		t.Fatalf("burst prefix not stable: %q %q %q", a, b, c)
 	}
 }
 
@@ -132,10 +182,10 @@ func TestBackendHeadersParentRotatesPerCall(t *testing.T) {
 	b, _ := http.NewRequest(http.MethodPost, "https://copilot.tencent.com/v2/chat/completions", nil)
 	backendHeaders(a, &storedAuth{}, sess)
 	backendHeaders(b, &storedAuth{}, sess)
-	if a.Header.Get("X-Conversation-ID") != b.Header.Get("X-Conversation-ID") {
+	if wireHeader(a.Header, "X-Conversation-ID") != wireHeader(b.Header, "X-Conversation-ID") {
 		t.Fatal("conversation id must stay stable within a session")
 	}
-	if a.Header.Get("X-B3-ParentSpanId") == b.Header.Get("X-B3-ParentSpanId") {
+	if wireHeader(a.Header, "X-B3-ParentSpanId") == wireHeader(b.Header, "X-B3-ParentSpanId") {
 		t.Fatal("parent span must rotate per call (per upstream turn)")
 	}
 }
