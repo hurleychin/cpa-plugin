@@ -8,17 +8,13 @@ import (
 func TestNewChatSessionNoSession(t *testing.T) {
 	h := http.Header{}
 	sess := newChatSession(h, nil)
-	if sess.purpose != "conversation_topic" {
-		t.Fatalf("purpose = %q, want conversation_topic", sess.purpose)
+	// Every executor call carries user content (the title call never passes
+	// through the plugin), so it always mirrors the CLI's main call.
+	if sess.purpose != "conversation" {
+		t.Fatalf("purpose = %q, want conversation", sess.purpose)
 	}
 	if sess.id != "" {
 		t.Fatalf("id = %q, want empty", sess.id)
-	}
-	if sess.parentSpanID != "" {
-		t.Fatalf("parentSpanID = %q, want empty", sess.parentSpanID)
-	}
-	if sess.codebuddyReq {
-		t.Fatal("codebuddyReq = true, want false")
 	}
 }
 
@@ -32,12 +28,6 @@ func TestNewChatSessionWithSession(t *testing.T) {
 	if sess.id == "" {
 		t.Fatal("id empty, want derived UUID")
 	}
-	if !sess.codebuddyReq {
-		t.Fatal("codebuddyReq = false, want true")
-	}
-	if sess.parentSpanID == "" {
-		t.Fatal("parentSpanID empty, want derived span")
-	}
 }
 
 func TestNewChatSessionStable(t *testing.T) {
@@ -47,9 +37,6 @@ func TestNewChatSessionStable(t *testing.T) {
 	b := newChatSession(h, nil)
 	if a.id != b.id {
 		t.Fatalf("conversation id not stable: %q vs %q", a.id, b.id)
-	}
-	if a.parentSpanID != b.parentSpanID {
-		t.Fatalf("parent span not stable: %q vs %q", a.parentSpanID, b.parentSpanID)
 	}
 }
 
@@ -84,6 +71,72 @@ func TestBackendHeadersAccept(t *testing.T) {
 	backendHeaders(req, &storedAuth{}, newChatSession(http.Header{}, nil))
 	if got := req.Header.Get("Accept"); got != "application/json" {
 		t.Fatalf("Accept = %q, want application/json", got)
+	}
+}
+
+func TestBackendHeadersTurnShape(t *testing.T) {
+	// Every call is a turn start: self-rooted request id, fresh 4-part b3
+	// with parent, codebuddy-request always set, no X-Private-Data.
+	for _, h := range []http.Header{{}, func() http.Header {
+		x := http.Header{}
+		x.Set("X-Session-ID", "turn-shape-1")
+		return x
+	}()} {
+		req, _ := http.NewRequest(http.MethodPost, "https://copilot.tencent.com/v2/chat/completions", nil)
+		backendHeaders(req, &storedAuth{}, newChatSession(h, nil))
+		if got := req.Header.Get("X-Agent-Purpose"); got != "conversation" {
+			t.Fatalf("X-Agent-Purpose = %q, want conversation", got)
+		}
+		convReq := req.Header.Get("X-Conversation-Request-ID")
+		if convReq == "" {
+			t.Fatal("X-Conversation-Request-ID missing")
+		}
+		if got := req.Header.Get("X-Root-Request-ID"); got != convReq {
+			t.Fatalf("X-Root-Request-ID = %q, want self-root %q", got, convReq)
+		}
+		if req.Header.Get("X-Request-ID") != req.Header.Get("X-Conversation-Message-ID") {
+			t.Fatal("X-Request-ID must equal X-Conversation-Message-ID")
+		}
+		parent := req.Header.Get("X-B3-ParentSpanId")
+		if parent == "" {
+			t.Fatal("X-B3-ParentSpanId missing")
+		}
+		span := req.Header.Get("X-B3-SpanId")
+		trace := req.Header.Get("X-B3-TraceId")
+		if want := trace + "-" + span + "-1-" + parent; req.Header.Get("b3") != want {
+			t.Fatalf("b3 = %q, want %q", req.Header.Get("b3"), want)
+		}
+		if got := req.Header.Get("X-CodeBuddy-Request"); got != "1" {
+			t.Fatalf("X-CodeBuddy-Request = %q, want 1", got)
+		}
+		if _, ok := req.Header["X-Private-Data"]; ok {
+			t.Fatal("X-Private-Data must not be sent")
+		}
+		if got := req.Header.Get("X-IDE-Version"); got != "2.147.0" {
+			t.Fatalf("X-IDE-Version = %q, want 2.147.0", got)
+		}
+		if got := req.Header.Get("X-Stainless-Os"); got != "Windows" {
+			t.Fatalf("X-Stainless-Os = %q, want Windows", got)
+		}
+		if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "v26.3.0" {
+			t.Fatalf("X-Stainless-Runtime-Version = %q, want v26.3.0", got)
+		}
+	}
+}
+
+func TestBackendHeadersParentRotatesPerCall(t *testing.T) {
+	h := http.Header{}
+	h.Set("X-Session-ID", "rotate-check")
+	sess := newChatSession(h, nil)
+	a, _ := http.NewRequest(http.MethodPost, "https://copilot.tencent.com/v2/chat/completions", nil)
+	b, _ := http.NewRequest(http.MethodPost, "https://copilot.tencent.com/v2/chat/completions", nil)
+	backendHeaders(a, &storedAuth{}, sess)
+	backendHeaders(b, &storedAuth{}, sess)
+	if a.Header.Get("X-Conversation-ID") != b.Header.Get("X-Conversation-ID") {
+		t.Fatal("conversation id must stay stable within a session")
+	}
+	if a.Header.Get("X-B3-ParentSpanId") == b.Header.Get("X-B3-ParentSpanId") {
+		t.Fatal("parent span must rotate per call (per upstream turn)")
 	}
 }
 

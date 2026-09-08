@@ -99,7 +99,7 @@ const (
 	// client version used for the client-identifying headers and User-Agent,
 	// kept in sync with the official CodeBuddy CLI so the billing/usage backend
 	// reports a known "client".
-	clientVersion = "2.137.1"
+	clientVersion = "2.147.0"
 
 	// CN endpoint aliases (login / chat / models). upstreamBaseCN is the only
 	// CN base; Global has its own upstreamBaseGlobal. No "upstreamBase" legacy
@@ -552,15 +552,15 @@ func endpointModelsFor(sa *storedAuth) string {
 // chatSession carries the per-request conversation identity derived from the
 // incoming client's session header. When a session id is present, the request
 // is treated as a continuation of that conversation and all correlating headers
-// (conversation id, purpose, trace parent, codebuddy-request) become stable
-// across the session — mirroring how the real CodeBuddy CLI correlates the
-// requests of one conversation. Without a session id the request is a fresh
-// topic: random ids, conversation_topic purpose, root trace, no codebuddy-request.
+// Every executor call is the start of a new upstream turn (the real CLI's
+// prompt_suggestion follow-ups never pass through the plugin): it carries the
+// user content, so it always mirrors the CLI's main conversation call —
+// purpose=conversation, a fresh parent span, a self-rooted request id and
+// X-CodeBuddy-Request: 1. Only the conversation id is stable across the
+// session; without a session id everything is random (one-shot call).
 type chatSession struct {
-	id           string // stable conversation id, UUID form when present
-	purpose      string // X-Agent-Purpose
-	parentSpanID string // X-B3-ParentSpanId, empty for root (new topic)
-	codebuddyReq bool   // X-CodeBuddy-Request: "1" only for continuations
+	id      string // stable conversation id, UUID form when present
+	purpose string // X-Agent-Purpose, always "conversation"
 }
 
 // newChatSession derives a chatSession from the incoming executor request
@@ -572,17 +572,14 @@ type chatSession struct {
 func newChatSession(headers http.Header, payload []byte) chatSession {
 	sid := allSessionCandidates(headers, payload)
 	if sid == "" {
-		return chatSession{purpose: "conversation_topic"}
+		return chatSession{purpose: "conversation"}
 	}
-	// Deterministic stable ids so one client session maps to one upstream
-	// conversation. conversation id is formatted as a v4-style UUID string
-	// (the shape the real CLI sends); the parent span id is a 16-hex B3 span.
+	// Deterministic stable conversation id so one client session maps to one
+	// upstream conversation (the shape the real CLI sends: v4-style UUID).
 	digest := sha256.Sum256([]byte("cpa:workbuddy:session:v1\x00" + sid))
 	return chatSession{
-		id:           sha256UUID(digest[:]),
-		purpose:      "conversation",
-		parentSpanID: hex.EncodeToString(digest[0:8]),
-		codebuddyReq: true,
+		id:      sha256UUID(digest[:]),
+		purpose: "conversation",
 	}
 }
 
@@ -635,51 +632,49 @@ func backendHeaders(req *http.Request, sa *storedAuth, sess chatSession) {
 	req.Header.Set("X-Agent-Intent", "craft")
 	req.Header.Set("X-Agent-Purpose", sess.purpose)
 	req.Header.Set("X-Agent-Type", "main")
-	req.Header.Set("X-Private-Data", "false")
 
 	// Conversation/request IDs mirror the official CodeBuddy CLI: the message
-	// ID doubles as the request ID, conversation IDs are unique per exchange
-	// (and stable per client session when one is present). The conversation
-	// request id is a separate random value, as the CLI keeps it distinct.
+	// ID doubles as the request ID, and every call is a turn start so the
+	// root request id equals the conversation request id (self-rooted).
+	// The conversation id is unique per exchange (stable per client session
+	// when one is present).
 	conversationID := sess.id
 	if conversationID == "" {
 		conversationID = randomUUID()
 	}
 	requestID := randomHex(16)
+	conversationRequestID := randomHex(16)
 	req.Header.Set("X-Request-ID", requestID)
 	req.Header.Set("X-Conversation-ID", conversationID)
-	req.Header.Set("X-Conversation-Request-ID", randomHex(16))
+	req.Header.Set("X-Conversation-Request-ID", conversationRequestID)
+	req.Header.Set("X-Root-Request-ID", conversationRequestID)
 	req.Header.Set("X-Conversation-Message-ID", requestID)
 
 	// Distributed tracing headers, matching the W3C/B3 format the CLI emits.
-	// Continuations of a session reuse a stable parent span id (4-part b3 +
-	// X-B3-ParentSpanId, exactly like the CLI's follow-up requests); a fresh
-	// topic stays a root span (3-part b3, no parent).
+	// Every call is a turn start: fresh trace/span plus a fresh parent span
+	// id (4-part b3 + X-B3-ParentSpanId), exactly like the CLI's per-turn
+	// first request. From the server's view this is indistinguishable from
+	// the real CLI because the in-turn follow-ups never pass through us.
 	traceID := randomHex(16)
 	spanID := randomHex(8)
-	if sess.parentSpanID != "" {
-		req.Header.Set("b3", traceID+"-"+spanID+"-1-"+sess.parentSpanID)
-		req.Header.Set("X-B3-ParentSpanId", sess.parentSpanID)
-	} else {
-		req.Header.Set("b3", traceID+"-"+spanID+"-1")
-	}
+	parentSpanID := randomHex(8)
+	req.Header.Set("b3", traceID+"-"+spanID+"-1-"+parentSpanID)
+	req.Header.Set("X-B3-ParentSpanId", parentSpanID)
 	req.Header.Set("traceparent", "00-"+traceID+"-"+spanID+"-01")
 	req.Header.Set("X-Trace-Id", traceID)
 	req.Header.Set("X-B3-TraceId", traceID)
 	req.Header.Set("X-B3-SpanId", spanID)
 	req.Header.Set("X-B3-Sampled", "1")
-	if sess.codebuddyReq {
-		req.Header.Set("X-CodeBuddy-Request", "1")
-	}
+	req.Header.Set("X-CodeBuddy-Request", "1")
 
 	// stainless SDK headers the CLI ships with.
 	req.Header.Set("X-Stainless-Arch", "x64")
 	req.Header.Set("X-Stainless-Lang", "js")
-	req.Header.Set("X-Stainless-Os", "Linux")
+	req.Header.Set("X-Stainless-Os", "Windows")
 	req.Header.Set("X-Stainless-Package-Version", "6.25.0")
 	req.Header.Set("X-Stainless-Retry-Count", "0")
 	req.Header.Set("X-Stainless-Runtime", "node")
-	req.Header.Set("X-Stainless-Runtime-Version", "v24.3.0")
+	req.Header.Set("X-Stainless-Runtime-Version", "v26.3.0")
 
 	// Override Origin/Referer for Global accounts so the upstream doesn't
 	// reject the request as cross-origin.
@@ -836,8 +831,8 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		BodySession:   sessionIDFromBody(req.Payload),
 		Purpose:       sess.purpose,
 		ConvID:        sess.id,
-		ParentSpan:    sess.parentSpanID,
-		CodebuddyReq:  sess.codebuddyReq,
+		ParentSpan:    httpReq.Header.Get("X-B3-ParentSpanId"),
+		CodebuddyReq:  httpReq.Header.Get("X-CodeBuddy-Request") == "1",
 		Headers:       filterTraceHeaders(httpReq.Header),
 	})
 	// Compliance: route via host.http.do_stream so request-log captures the
@@ -901,18 +896,21 @@ func handleExecStream(raw []byte) ([]byte, error) {
 	// No async stream id → fall back to synchronous chunk collection.
 	if req.StreamID == "" {
 		sess := newChatSession(req.Headers, req.Payload)
-		writeSessionTrace(traceLine{
-			Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
-			Model:         req.Model,
-			SessionHeader: allSessionCandidates(req.Headers, req.Payload),
-			BodySession:   sessionIDFromBody(req.Payload),
-			Purpose:       sess.purpose,
-			ConvID:        sess.id,
-			ParentSpan:    sess.parentSpanID,
-			CodebuddyReq:  sess.codebuddyReq,
-		})
 		collector := &sseUsageCollector{}
-		chunks, statusCode, errCollect := collectUpstreamStream(body, sa, req.Headers, sess, sseFramed, collector)
+		chunks, statusCode, httpReq, errCollect := collectUpstreamStream(body, sa, req.Headers, sess, sseFramed, collector)
+		if httpReq != nil {
+			writeSessionTrace(traceLine{
+				Timestamp:     time.Now().UTC().Format(time.RFC3339Nano),
+				Model:         req.Model,
+				SessionHeader: allSessionCandidates(req.Headers, req.Payload),
+				BodySession:   sessionIDFromBody(req.Payload),
+				Purpose:       sess.purpose,
+				ConvID:        sess.id,
+				ParentSpan:    httpReq.Header.Get("X-B3-ParentSpanId"),
+				CodebuddyReq:  httpReq.Header.Get("X-CodeBuddy-Request") == "1",
+				Headers:       filterTraceHeaders(httpReq.Header),
+			})
+		}
 		if errCollect != nil {
 			publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, statusCode, errCollect.Error())
 			var statusErr *upstreamStatusError
@@ -950,8 +948,8 @@ func handleExecStream(raw []byte) ([]byte, error) {
 		BodySession:   sessionIDFromBody(req.Payload),
 		Purpose:       sess.purpose,
 		ConvID:        sess.id,
-		ParentSpan:    sess.parentSpanID,
-		CodebuddyReq:  sess.codebuddyReq,
+		ParentSpan:    httpReq.Header.Get("X-B3-ParentSpanId"),
+		CodebuddyReq:  httpReq.Header.Get("X-CodeBuddy-Request") == "1",
 		Headers:       filterTraceHeaders(httpReq.Header),
 	})
 	go pumpUpstreamStream(httpReq, cancel, req.StreamID, sseFramed, req.Model, upstreamModel, authUID, started, req.AuthID)

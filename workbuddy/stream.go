@@ -152,17 +152,18 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 // collectUpstreamStream is the synchronous fallback (no async stream id): drain
 // the upstream, clean each chunk, return them as a slice. The collector, when
 // non-nil, observes raw upstream chunks for usage extraction. statusCode is the
-// upstream HTTP status (0 for transport-level failures).
-func collectUpstreamStream(body []byte, sa *storedAuth, headers http.Header, sess chatSession, sseFramed bool, collector *sseUsageCollector) ([]pluginapi.ExecutorStreamChunk, int, error) {
+// upstream HTTP status (0 for transport-level failures). The built request is
+// returned as well so callers can trace the exact outbound headers sent.
+func collectUpstreamStream(body []byte, sa *storedAuth, headers http.Header, sess chatSession, sseFramed bool, collector *sseUsageCollector) ([]pluginapi.ExecutorStreamChunk, int, *http.Request, error) {
 	httpReq, err := http.NewRequest(http.MethodPost, endpointChatFor(sa), bytes.NewReader(body))
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	backendHeaders(httpReq, sa, sess)
 	// Compliance: route via host.http.do_stream so request-log captures the call.
 	stream, statusCode, _, err := hostHTTPDoStream(httpReq)
 	if err != nil {
-		return nil, 0, fmt.Errorf("http_error: %w", err)
+		return nil, 0, httpReq, fmt.Errorf("http_error: %w", err)
 	}
 	defer stream.Close()
 	reader := newHostStreamReader(stream)
@@ -171,16 +172,16 @@ func collectUpstreamStream(body []byte, sa *storedAuth, headers http.Header, ses
 		if sa != nil && sa.Account.UID != "" {
 			go reconcileByUID(sa.Account.UID, statusCode, string(errPayload))
 		}
-		return nil, statusCode, &upstreamStatusError{
+		return nil, statusCode, httpReq, &upstreamStatusError{
 			status:  statusCode,
 			message: fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(string(errPayload), 200)),
 		}
 	}
 	chunks, errAgg := aggregateSSEWithCollector(reader, sseFramed, collector)
 	if errAgg != nil {
-		return chunks, statusCode, errAgg
+		return chunks, statusCode, httpReq, errAgg
 	}
-	return chunks, statusCode, nil
+	return chunks, statusCode, httpReq, nil
 }
 
 // clientNeedsSSEFrame reports whether chunk payloads must carry their own
