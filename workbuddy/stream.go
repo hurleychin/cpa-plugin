@@ -21,6 +21,15 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
+var streamHostCall = hostCall
+
+type upstreamStatusError struct {
+	status  int
+	message string
+}
+
+func (e *upstreamStatusError) Error() string { return e.message }
+
 // streamEmit pushes one chunk payload to the host stream. Returns an error if
 // the host rejected it (e.g. the client already disconnected and the stream
 // was closed), which the pump uses to stop reading a dead upstream.
@@ -29,25 +38,32 @@ func streamEmit(streamID string, payload []byte) error {
 		return fmt.Errorf("no stream id")
 	}
 	body, _ := json.Marshal(map[string]any{"stream_id": streamID, "payload": payload})
-	_, err := hostCall(pluginabi.MethodHostStreamEmit, body)
+	_, err := streamHostCall(pluginabi.MethodHostStreamEmit, body)
 	return err
+}
+
+func streamErrorWire(streamID, message string) []byte {
+	raw, _ := json.Marshal(map[string]any{"stream_id": streamID, "error": redactSecrets(message)})
+	return raw
+}
+
+func streamCloseWire(streamID string) []byte {
+	raw, _ := json.Marshal(map[string]any{"stream_id": streamID})
+	return raw
 }
 
 func streamEmitError(streamID, message string) {
 	if streamID == "" {
 		return
 	}
-	// A-37: never emit raw upstream bodies that may contain Bearer/JWT.
-	errJSON, _ := json.Marshal(map[string]any{"error": map[string]any{"message": redactSecrets(message)}})
-	_ = streamEmit(streamID, errJSON)
+	_, _ = streamHostCall(pluginabi.MethodHostStreamEmit, streamErrorWire(streamID, message))
 }
 
 func streamClose(streamID string) {
 	if streamID == "" {
 		return
 	}
-	body, _ := json.Marshal(map[string]any{"stream_id": streamID})
-	_, _ = hostCall(pluginabi.MethodHostStreamClose, body)
+	_, _ = streamHostCall(pluginabi.MethodHostStreamClose, streamCloseWire(streamID))
 }
 
 func streamHeaders() http.Header {
@@ -155,7 +171,10 @@ func collectUpstreamStream(body []byte, sa *storedAuth, headers http.Header, ses
 		if sa != nil && sa.Account.UID != "" {
 			go reconcileByUID(sa.Account.UID, statusCode, string(errPayload))
 		}
-		return nil, statusCode, fmt.Errorf("upstream %d: %s", statusCode, truncateRedacted(string(errPayload), 200))
+		return nil, statusCode, &upstreamStatusError{
+			status:  statusCode,
+			message: fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(string(errPayload), 200)),
+		}
 	}
 	chunks, errAgg := aggregateSSEWithCollector(reader, sseFramed, collector)
 	if errAgg != nil {

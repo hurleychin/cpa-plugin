@@ -65,6 +65,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -306,8 +307,9 @@ type envelope struct {
 }
 
 type envelopeError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	HTTPStatus int    `json:"http_status,omitempty"`
 }
 
 type identifierResponse struct {
@@ -851,7 +853,7 @@ func handleExecExecute(raw []byte) ([]byte, error) {
 		payload, _ := io.ReadAll(reader)
 		publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, statusCode, string(payload))
 		reconcileAfterExecutorError(req.AuthID, statusCode, string(payload))
-		return nil, fmt.Errorf("upstream %d: %s", statusCode, truncateRedacted(string(payload), 200))
+		return errorEnvelopeWithStatus("http_error", fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(string(payload), 200)), statusCode), nil
 	}
 	completion, err := aggregateCompletion(reader, req.Model)
 	if err != nil {
@@ -913,6 +915,10 @@ func handleExecStream(raw []byte) ([]byte, error) {
 		chunks, statusCode, errCollect := collectUpstreamStream(body, sa, req.Headers, sess, sseFramed, collector)
 		if errCollect != nil {
 			publishUsage(req.Model, upstreamModel, authUID, started, usage.Detail{}, true, statusCode, errCollect.Error())
+			var statusErr *upstreamStatusError
+			if errors.As(errCollect, &statusErr) {
+				return errorEnvelopeWithStatus("http_error", redactSecrets(statusErr.Error()), statusErr.status), nil
+			}
 			return nil, errCollect
 		}
 		publishUsage(req.Model, upstreamModel, authUID, started, collector.detail(), false, 0, "")
@@ -964,6 +970,11 @@ func okEnvelope(v any) ([]byte, error) {
 
 func errorEnvelope(code, message string) []byte {
 	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{Code: code, Message: message}})
+	return raw
+}
+
+func errorEnvelopeWithStatus(code, message string, status int) []byte {
+	raw, _ := json.Marshal(envelope{OK: false, Error: &envelopeError{Code: code, Message: message, HTTPStatus: status}})
 	return raw
 }
 
