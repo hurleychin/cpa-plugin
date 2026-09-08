@@ -158,8 +158,14 @@ func handlePollLogin(raw []byte) ([]byte, error) {
 	loginStates.Delete(state)
 	return okEnvelope(pluginapi.AuthLoginPollResponse{
 		Status: pluginapi.AuthLoginStatusSuccess,
-		Auth:   toAuthData(sa),
+		Auth:   toAuthDataForLoginPoll(sa),
 	})
+}
+
+func toAuthDataForLoginPoll(sa *storedAuth) pluginapi.AuthData {
+	ad := toAuthData(sa)
+	ad.ID = ""
+	return ad
 }
 
 func handleRefreshAuth(raw []byte) ([]byte, error) {
