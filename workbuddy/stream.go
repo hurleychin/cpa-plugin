@@ -113,7 +113,7 @@ func pumpUpstreamStream(httpReq *http.Request, cancel context.CancelFunc, stream
 		if authUID != "" {
 			go reconcileByUID(authUID, statusCode, string(errPayload))
 		}
-		streamEmitError(streamID, fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(string(errPayload), 200)))
+		streamEmitError(streamID, fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(string(errPayload), 1000)))
 		return
 	}
 	collector := &sseUsageCollector{}
@@ -174,7 +174,7 @@ func collectUpstreamStream(body []byte, sa *storedAuth, headers http.Header, ses
 		}
 		return nil, statusCode, httpReq, &upstreamStatusError{
 			status:  statusCode,
-			message: fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(string(errPayload), 200)),
+			message: fmt.Sprintf("upstream %d: %s", statusCode, truncateRedacted(string(errPayload), 1000)),
 		}
 	}
 	chunks, errAgg := aggregateSSEWithCollector(reader, sseFramed, collector)
