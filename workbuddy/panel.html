@@ -310,8 +310,9 @@ function promoTip(p){
   return p.text||p.id;
 }
 function modelsHTML(a){
-  if(a.models_err) return `<div class="pkgs"><div class="p"><span>可用模型</span><span class="v err">${esc(a.models_err)}</span></div></div>`;
-  if(!a.models) return `<div class="pkgs"><div class="p"><span>可用模型</span><span style="color:var(--mut)">加载中…</span></div></div>`;
+  // 真正懒加载：未展开前只放占位，首次展开(details toggle)才请求 /models。
+  if(a.models_err) return `<details class="pkgs models-lazy" data-auth="${esc(a.auth_index)}"><summary style="cursor:pointer">可用模型</summary><div class="p"><span class="v err">${esc(a.models_err)}（重新展开可重试）</span></div></details>`;
+  if(!a.models) return `<details class="pkgs models-lazy" data-auth="${esc(a.auth_index)}"${a._models_open?" open":""}><summary style="cursor:pointer">可用模型</summary><div class="p"><span style="color:var(--mut)"><span class="spin"></span>加载中…</span></div></details>`;
   if(!a.models.length) return "";
   const pm=promoMapOf(a);
   const rows=a.models.map(m=>{
@@ -320,7 +321,7 @@ function modelsHTML(a){
     const rate=m.rate?`<span title="积分倍率" style="color:var(--acc);font-weight:700">${esc(m.rate)}</span>`:"";
     return `<div class="p"><span title="${esc(m.desc||m.id)}">${esc(m.name||m.id)}${caps?` <span style="opacity:.7">${caps}</span>`:""}</span><span style="display:flex;gap:6px;align-items:center">${badges}<span class="uid" style="margin:0">${esc(m.id)}</span>${rate}</span></div>`;
   }).join("");
-  return `<details class="pkgs"><summary style="cursor:pointer">可用模型（${a.models.length}）</summary>${rows}</details>`;
+  return `<details class="pkgs models-lazy" data-auth="${esc(a.auth_index)}"${a._models_open?" open":""}><summary style="cursor:pointer">可用模型（${a.models.length}）</summary>${rows}</details>`;
 }
 function esc(s){return (s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function progressHTML(c){
@@ -480,22 +481,46 @@ function lazyLoadCredits(accounts){
       });
   });
 }
-// Lazy-load: fetch models+promotions for cards that lack them, concurrently.
-function lazyLoadModels(accounts){
-  const need=accounts.filter(a=>!a.models&&!a.models_err&&!a.error);
-  if(!need.length) return;
-  need.forEach(a=>{
-    const idx=a.auth_index;
-    api(`/models?auth_index=${encodeURIComponent(idx)}`)
-      .then(d=>{
-        if(d.error){ a.models_err=d.error; }
-        else{
-          a.models=d.models||[];
-          a.promotions=d.promotions||[];
-        }
-        updateOneCard(a);
-      })
-      .catch(()=>{ a.models_err="模型查询失败"; updateOneCard(a); });
+// 真正懒加载：首次展开某卡的"可用模型"时才请求该账号的 /models。
+// 展开事件委托在 #grid 上，卡片重渲染后无需重绑；重渲染保持展开状态
+// （_models_open 标记 + modelsHTML 里回填 open 属性）。
+function ensureModelsLoaded(a){
+  if(!a || a.models || a.models_err || a._models_loading) return;
+  a._models_loading=true;
+  const idx=a.auth_index;
+  api(`/models?auth_index=${encodeURIComponent(idx)}`)
+    .then(d=>{
+      a._models_loading=false;
+      if(d.error){ a.models_err=d.error; }
+      else{
+        a.models=d.models||[];
+        a.promotions=d.promotions||[];
+      }
+      updateOneCard(a);
+    })
+    .catch(()=>{
+      a._models_loading=false;
+      a.models_err="模型查询失败";
+      updateOneCard(a);
+    });
+}
+// 展开即加载 + 保持展开状态；只有未加载过数据(无 models 字段)的卡才挂监听。
+function bindModelsToggle(root){
+  (root||document).querySelectorAll("details.models-lazy:not([data-lb])").forEach(dt=>{
+    dt.dataset.lb="1";
+    dt.addEventListener("toggle", ()=>{
+      const idx=dt.dataset.auth;
+      const a=(lastAccounts||[]).find(x=>x.auth_index===idx);
+      if(!a) return;
+      if(dt.open){
+        a._models_open=true;
+        // 错误态重新展开 → 清掉错误重试一次。
+        if(a.models_err) a.models_err=null;
+        ensureModelsLoaded(a);
+      }else{
+        a._models_open=false;
+      }
+    });
   });
 }
 function updateOneCard(a){
@@ -508,6 +533,7 @@ function updateOneCard(a){
     const newCard=tmp.firstChild;
     el.replaceWith(newCard);
     bindCardActions(newCard);
+    bindModelsToggle(newCard);
   }
   filterRegion(currentFilter, null);
   // Update summary + re-check selection when all done.
@@ -534,6 +560,7 @@ function updateOneCard(a){
       if(g){
         g.innerHTML=accountsForFilter(all).map(card).join("");
         bindCardActions(g);
+        bindModelsToggle(g);
       }
       filterRegion(currentFilter, null);
     }).catch(()=>{});
@@ -734,8 +761,8 @@ async function load(force, btn){
     renderSummary(accounts);
     // Lazy-load credits for cards that don't have them yet.
     lazyLoadCredits(accounts);
-    // Lazy-load models + promotions for cards that don't have them yet.
-    lazyLoadModels(accounts);
+    // Bind toggle-based lazy loading for the models sections.
+    bindModelsToggle(g);
     if(force){
       const errN=accounts.filter(a=>a.error).length;
       const life=(d.lifecycle||[]).length;
@@ -885,6 +912,7 @@ async function selectAuth(idx, btn){
     if(g){
       g.innerHTML=accountsForFilter(lastAccounts).map(card).join("");
       bindCardActions(g);
+      bindModelsToggle(g);
     }
     filterRegion(currentFilter, null);
   }catch(e){
