@@ -113,6 +113,7 @@ func managementRegistration() managementRegistrationResponse {
 			{Method: http.MethodPost, Path: base + "/checkin", Description: "Manually check in one personal CN account (auth_index) or all (enterprise accounts are skipped)."},
 			{Method: http.MethodPost, Path: base + "/checkin/config", Description: "Toggle auto check-in for personal CN accounts (enabled: true/false)."},
 			{Method: http.MethodGet, Path: base + "/credits", Description: "Get real-time credits for one (auth_index query) or all accounts."},
+			{Method: http.MethodGet, Path: base + "/models", Description: "Get one account's usable models + model promotions for the panel card (auth_index query)."},
 			{Method: http.MethodPost, Path: base + "/import", Description: "Import WorkBuddy credential JSON (nested or flat) into host auth store."},
 			{Method: http.MethodPost, Path: base + "/trial", Description: "Claim expert trial pack for one Global personal account (auth_index). One-time 250 credits / 14 days."},
 			{Method: http.MethodPost, Path: base + "/select", Description: "Select the active account card used for chat routing (body: {auth_index})."},
@@ -168,6 +169,8 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleClaimTrial(req)))
 	case req.Method == http.MethodGet && path == base+"/credits":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleCreditsQuery(req)))
+	case req.Method == http.MethodGet && path == base+"/models":
+		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleAccountModels(req)))
 	case req.Method == http.MethodPost && path == base+"/import":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleImportAuth(req)))
 	case req.Method == http.MethodPost && path == base+"/select":
