@@ -150,6 +150,7 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 				"label":      f.Label,
 				"disabled":   f.Disabled,
 				"selected":   getActiveAuthID() == f.ID,
+				"enterprise": isEnterpriseAccount(sa),
 			}
 			if err != nil {
 				acct["error"] = err.Error()
@@ -158,14 +159,31 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 				acct["exhausted"] = isCreditsExhausted(cr)
 				// Also fetch plan so the badge updates on lazy load.
 				acct["plan"] = fetchPaymentType(sa)
+				if !isEnterpriseAccount(sa) {
+					if v, ok := accountCache.Load(f.ID); ok {
+						if e, ok2 := v.(*accountCacheEntry); ok2 && e.checkin != nil {
+							acct["checkin"] = e.checkin
+						}
+					}
+					if isGlobalDomain(sa.Auth.Domain) {
+						acct["trial_claimed"] = hasTrialPack(cr)
+					}
+				}
 				// Update cache so subsequent dashboard loads see fresh data.
+				// Merge: keep the checkin snapshot (credits query doesn't refetch it).
 				now := time.Now()
 				if cr != nil {
 					cr.FetchedAt = now.UTC().Format(time.RFC3339)
 				}
 				plan, _ := acct["plan"].(string)
+				var prevCI *checkinSummary
+				if v, ok := accountCache.Load(f.ID); ok {
+					if e, ok2 := v.(*accountCacheEntry); ok2 {
+						prevCI = e.checkin
+					}
+				}
 				accountCache.Store(f.ID, &accountCacheEntry{
-					credits: cr, plan: plan, fetched: now,
+					checkin: prevCI, credits: cr, plan: plan, fetched: now,
 				})
 			}
 			return map[string]any{"accounts": []map[string]any{acct}}

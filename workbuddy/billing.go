@@ -153,6 +153,18 @@ func billingCallOnce(sa *storedAuth, path string, body any) (json.RawMessage, er
 }
 
 func fetchUserResource(sa *storedAuth) (*creditsSummary, error) {
+	// Routing (personal-edition merge, enterprise behavior unchanged):
+	//   - enterprise org accounts (EnterpriseID != "") → enterprise usage API
+	//     only, exactly as before;
+	//   - personal accounts (no EnterpriseID) → upstream personal resource
+	//     packages (get-user-resource), which reflect 签到 grants.
+	if !isEnterpriseAccount(sa) {
+		return fetchPersonalUserResource(sa)
+	}
+	return fetchEnterpriseUserResource(sa)
+}
+
+func fetchEnterpriseUserResource(sa *storedAuth) (*creditsSummary, error) {
 	// Enterprise usage endpoint (tencent CodeBuddy billing console "web" client).
 	// POST body is empty; the response carries the enterprise quota snapshot:
 	//   data.credit         — credits USED in the cycle (已用积分)

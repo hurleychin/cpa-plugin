@@ -51,6 +51,7 @@ const fallbackUsageReportURL = "http://cpa-manager-plus:18317/v0/management/usag
 // configure decodes plugin config from the lifecycle request.
 func configure(raw []byte) {
 	// Parse config without holding any lock (fixes nested-lock hazard).
+	nextCheckinAuto := true
 	nextLifecycleAuto := true
 	nextSchedulerMode := schedulerModeOff // reset to default on reconfigure
 	nextKeepaliveAuto := true
@@ -64,6 +65,11 @@ func configure(raw []byte) {
 		if err := json.Unmarshal(raw, &req); err == nil {
 			for _, line := range strings.Split(string(req.ConfigYAML), "\n") {
 				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "checkin_auto:") {
+					v := strings.TrimSpace(strings.TrimPrefix(line, "checkin_auto:"))
+					v = strings.Trim(v, "\"'")
+					nextCheckinAuto = v == "true" || v == "1" || v == "yes" || v == "on"
+				}
 				if strings.HasPrefix(line, "lifecycle_auto:") {
 					v := strings.TrimSpace(strings.TrimPrefix(line, "lifecycle_auto:"))
 					v = strings.Trim(v, "\"'")
@@ -99,6 +105,10 @@ func configure(raw []byte) {
 	}
 
 	// Apply each setting under its own lock — no nesting.
+	checkinAutoMu.Lock()
+	checkinAuto = nextCheckinAuto
+	checkinAutoMu.Unlock()
+
 	lifecycleAutoMu.Lock()
 	lifecycleAuto = nextLifecycleAuto
 	lifecycleAutoMu.Unlock()

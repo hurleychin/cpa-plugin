@@ -110,8 +110,11 @@ func managementRegistration() managementRegistrationResponse {
 		Routes: []managementRoute{
 			{Method: http.MethodGet, Path: base + "/accounts", Description: "List WorkBuddy accounts with credits, plan and quota status."},
 			{Method: http.MethodPost, Path: base + "/refresh", Description: "Force refresh quota/cache for all accounts."},
+			{Method: http.MethodPost, Path: base + "/checkin", Description: "Manually check in one personal CN account (auth_index) or all (enterprise accounts are skipped)."},
+			{Method: http.MethodPost, Path: base + "/checkin/config", Description: "Toggle auto check-in for personal CN accounts (enabled: true/false)."},
 			{Method: http.MethodGet, Path: base + "/credits", Description: "Get real-time credits for one (auth_index query) or all accounts."},
 			{Method: http.MethodPost, Path: base + "/import", Description: "Import WorkBuddy credential JSON (nested or flat) into host auth store."},
+			{Method: http.MethodPost, Path: base + "/trial", Description: "Claim expert trial pack for one Global personal account (auth_index). One-time 250 credits / 14 days."},
 			{Method: http.MethodPost, Path: base + "/select", Description: "Select the active account card used for chat routing (body: {auth_index})."},
 			{Method: http.MethodPost, Path: base + "/keepalive", Description: "Manually refresh access tokens for all accounts (or one with auth_index)."},
 			{Method: http.MethodGet, Path: base + "/keepalive/status", Description: "Last keepalive run summary + config."},
@@ -157,6 +160,12 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, buildDashboardEx(false, false)))
 	case req.Method == http.MethodPost && path == base+"/refresh":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, buildDashboardEx(true, true)))
+	case req.Method == http.MethodPost && path == base+"/checkin":
+		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleManualCheckin(req)))
+	case req.Method == http.MethodPost && path == base+"/checkin/config":
+		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleCheckinConfig(req)))
+	case req.Method == http.MethodPost && path == base+"/trial":
+		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleClaimTrial(req)))
 	case req.Method == http.MethodGet && path == base+"/credits":
 		return okEnvelope(mgmtJSONResponse(http.StatusOK, handleCreditsQuery(req)))
 	case req.Method == http.MethodPost && path == base+"/import":
@@ -278,11 +287,14 @@ func managementClientIP(req pluginapi.ManagementRequest) string {
 }
 
 // mutatingManagementPath reports whether the path performs a write (import,
-// select, refresh, keepalive). Read endpoints pass.
+// select, refresh, keepalive, checkin, trial). Read endpoints pass.
 func mutatingManagementPath(path string) bool {
 	base := loadedManagementBasePath() + "/plugins/" + providerName
 	switch path {
 	case base + "/refresh",
+		base + "/checkin",
+		base + "/checkin/config",
+		base + "/trial",
 		base + "/import",
 		base + "/select",
 		base + "/keepalive":

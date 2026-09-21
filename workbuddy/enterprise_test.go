@@ -123,7 +123,10 @@ func TestFetchUserResource_EnterpriseExhausted(t *testing.T) {
 	restore := setBillingBase(srv.URL)
 	defer restore()
 
-	cr, err := fetchUserResource(&storedAuth{})
+	cr, err := fetchUserResource(&storedAuth{
+		Auth:    storedTokens{AccessToken: "tok", Domain: "www.codebuddy.cn"},
+		Account: storedAccount{UID: "u1", EnterpriseID: "ent1"},
+	})
 	if err != nil {
 		t.Fatalf("fetchUserResource: %v", err)
 	}

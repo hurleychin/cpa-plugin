@@ -12,6 +12,7 @@ import (
 
 // the failed field falls back to the previous value instead of being wiped.
 type accountCacheEntry struct {
+	checkin *checkinSummary // personal CN签到 snapshot; nil for enterprise
 	credits *creditsSummary
 	plan    string
 	fetched time.Time
@@ -103,6 +104,19 @@ func cachedAccountDetails(authID string, sa *storedAuth, force bool) (plan strin
 		}
 	}()
 	wg.Wait()
+	// Personal CN accounts additionally probe check-in status (best-effort,
+	// merged into the entry). Enterprise/Global skip: no extra upstream call,
+	// behavior identical to before.
+	var ci *checkinSummary
+	if shouldFetchCheckin(sa) {
+		if c, err := fetchCheckinStatus(sa); err == nil {
+			ci = c
+		} else {
+			addErr("checkin: " + err.Error())
+		}
+	} else if prev != nil {
+		ci = prev.checkin
+	}
 	// Stale-while-error: carry over previous values for fields that failed.
 	if prev != nil {
 		if cr == nil {
@@ -111,13 +125,16 @@ func cachedAccountDetails(authID string, sa *storedAuth, force bool) (plan strin
 		if plan == "" {
 			plan = prev.plan
 		}
+		if ci == nil {
+			ci = prev.checkin
+		}
 	}
 	now := time.Now()
 	if cr != nil {
 		// Stamp snapshot time for panel/API consumers (A-09 observability).
 		cr.FetchedAt = now.UTC().Format(time.RFC3339)
 	}
-	accountCache.Store(authID, &accountCacheEntry{credits: cr, plan: plan, fetched: now})
+	accountCache.Store(authID, &accountCacheEntry{checkin: ci, credits: cr, plan: plan, fetched: now})
 	// Soft cap: if map is huge, drop oldest-looking entries beyond bound.
 	pruneAccountCacheSoftCap(accountCacheSoftCap)
 	return plan, cr, errList

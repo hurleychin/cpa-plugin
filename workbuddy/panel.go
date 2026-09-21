@@ -26,7 +26,11 @@ type wbAccount struct {
 	Exhausted bool            `json:"exhausted"`
 	Selected  bool            `json:"selected"` // panel active routing card
 	Credits   *creditsSummary `json:"credits,omitempty"`
-	Error     string          `json:"error,omitempty"`
+	// Personal-edition state (nil/false for enterprise accounts):
+	Checkin      *checkinSummary `json:"checkin,omitempty"`
+	TrialClaimed bool            `json:"trial_claimed,omitempty"` // Global personal: expert trial already claimed
+	Enterprise   bool            `json:"enterprise,omitempty"`    // true when the account carries an EnterpriseID
+	Error        string          `json:"error,omitempty"`
 }
 
 // credits/plan fields are left empty — the panel renders skeletons
@@ -49,6 +53,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 		if _, ok := live[idx]; !ok {
 			accountCache.Delete(key)
 			authLocks.Delete(key)
+			checkinLocks.Delete(key)
 			lifecycleState.Delete(key)
 			return true
 		}
@@ -60,6 +65,7 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 	// Also prune stale lifecycle state and auth locks for gone accounts.
 	pruneLifecycleState()
 	pruneAuthLocks()
+	pruneCheckinLocks()
 	out := make([]wbAccount, len(files))
 	// Accounts are independent — fetch their dashboards concurrently. With 4
 	// accounts this cuts cold-load latency from ~4×(3 serial upstream calls)
@@ -93,11 +99,21 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 			acct.Nickname = sa.Account.Nickname
 			acct.UID = sa.Account.UID
 			acct.Region = accountRegion(sa)
+			acct.Enterprise = isEnterpriseAccount(sa)
 			if fetchCredits {
 				plan, cr, errs := cachedAccountDetails(f.ID, sa, force)
 				acct.Plan = plan
 				acct.Credits = cr
 				acct.Exhausted = isCreditsExhausted(cr)
+				// Personal state from cache (nil for enterprise).
+				if v, ok := accountCache.Load(f.ID); ok {
+					if e, ok2 := v.(*accountCacheEntry); ok2 {
+						acct.Checkin = e.checkin
+					}
+				}
+				if !acct.Enterprise && isGlobalDomain(sa.Auth.Domain) {
+					acct.TrialClaimed = hasTrialPack(cr)
+				}
 				// Keep note in sync (throttled); do not block dashboard on save errors.
 				_ = syncAuthNote(f.AuthIndex, f.ID, sa, cr, acct.Disabled)
 				acct.Error = strings.Join(errs, "; ")
@@ -106,8 +122,12 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 				if v, ok := accountCache.Load(f.ID); ok {
 					if e, ok2 := v.(*accountCacheEntry); ok2 {
 						acct.Plan = e.plan
+						acct.Checkin = e.checkin
 						acct.Credits = e.credits
 						acct.Exhausted = isCreditsExhausted(e.credits)
+						if !acct.Enterprise && isGlobalDomain(sa.Auth.Domain) {
+							acct.TrialClaimed = hasTrialPack(e.credits)
+						}
 					}
 				}
 			}
@@ -148,6 +168,9 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 						if e.plan != "" {
 							a.Plan = e.plan
 						}
+						if e.checkin != nil {
+							a.Checkin = e.checkin
+						}
 					}
 				}
 				filtered = append(filtered, a)
@@ -164,12 +187,14 @@ func buildDashboardEx(force, fetchCredits bool) map[string]any {
 		out[i].Selected = out[i].AuthID == activeID
 	}
 	resp := map[string]any{
-		"accounts":       out,
-		"active_auth":    activeID,
-		"lifecycle_auto": lifecycleEnabled(),
-		"schedule":       keepaliveHours,
-		"server_time":    time.Now().Format("2006-01-02 15:04:05"),
-		"summary":        sum,
+		"accounts":         out,
+		"active_auth":      activeID,
+		"checkin_auto":     checkinAutoEnabled(),
+		"lifecycle_auto":   lifecycleEnabled(),
+		"schedule":         keepaliveHours,
+		"checkin_schedule": checkinHours,
+		"server_time":      time.Now().Format("2006-01-02 15:04:05"),
+		"summary":          sum,
 	}
 	if len(life) > 0 {
 		resp["lifecycle"] = life
