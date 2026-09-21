@@ -33,6 +33,11 @@ func parsePickResponse(t *testing.T, raw []byte) pluginapi.SchedulerPickResponse
 
 func resetActiveAuth(t *testing.T) {
 	t.Helper()
+	// Isolate the on-disk selection: point it at a temp file so tests neither
+	// read the production state nor pollute it.
+	oldPath := activeAuthStatePath
+	activeAuthStatePath = t.TempDir() + "/active-auth"
+	resetActiveAuthState()
 	setActiveAuthID("")
 	// Pre-v0.6.31 tests assume plugin handles routing; default mode is now off.
 	// Flip to credits mode for the duration of each pick test so behavior stays
@@ -40,6 +45,8 @@ func resetActiveAuth(t *testing.T) {
 	restoreMode := setSchedulerMode(schedulerModeCredits)
 	t.Cleanup(func() {
 		setActiveAuthID("")
+		resetActiveAuthState()
+		activeAuthStatePath = oldPath
 		restoreMode()
 	})
 }
@@ -64,10 +71,15 @@ func TestSchedulerPick_NonWorkbuddy_Defers(t *testing.T) {
 // TestSchedulerPick_OffMode_Defers covers the v0.6.31 fix: scheduler_mode=off
 // must make the plugin decline to handle routing, even for workbuddy candidates.
 func TestSchedulerPick_OffMode_Defers(t *testing.T) {
+	oldPath := activeAuthStatePath
+	activeAuthStatePath = t.TempDir() + "/active-auth"
+	resetActiveAuthState()
 	setActiveAuthID("")
 	restoreMode := setSchedulerMode(schedulerModeOff)
 	t.Cleanup(func() {
 		setActiveAuthID("")
+		resetActiveAuthState()
+		activeAuthStatePath = oldPath
 		restoreMode()
 	})
 	raw, err := handleSchedulerPick(mustMarshal(t, pluginapi.SchedulerPickRequest{

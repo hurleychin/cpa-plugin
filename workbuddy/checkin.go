@@ -49,9 +49,14 @@ func schedulerLoop(stop chan struct{}) {
 			return
 		case <-timer.C:
 			// Personal daily check-in (CN personal only; enterprise/Global
-			// skip internally). Gated by checkin_auto.
-			if scheduledInCurrentHour(time.Now(), checkinHours) {
-				runAutoCheckin()
+			// skip internally). Fires once per day inside 09:00~10:00 at a
+			// random time; the tick day is recorded even when checkin_auto
+			// is off so a disabled day doesn't busy-loop the timer.
+			if inPersonalCheckinWindow(time.Now()) && !personalCheckinTickedToday(time.Now()) {
+				markPersonalCheckinTick(time.Now())
+				if checkinAutoEnabled() {
+					runAutoCheckin()
+				}
 			}
 			// 22:00 local: token keepalive (runs the reconcile lifecycle too
 			// so exhausted enterprise quotas are disabled/deleted).
@@ -65,9 +70,10 @@ func schedulerLoop(stop chan struct{}) {
 	}
 }
 
-// nextScheduledTime returns the next keepalive slot (22:00 local). Personal
-// check-in hours (09:00/21:00, see personal.go nextPersonalCheckinTime) share
-// the same schedulerLoop and are merged at wake-up time.
+// nextScheduledTime returns the next keepalive slot (22:00 local). The
+// personal check-in tick (daily random time in 09:00~10:00, see personal.go
+// nextPersonalCheckinTime) shares the same schedulerLoop and is merged at
+// wake-up time.
 func nextScheduledTime(now time.Time) time.Time {
 	var earliest time.Time
 	for _, h := range keepaliveHours {

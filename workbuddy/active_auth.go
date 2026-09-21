@@ -7,6 +7,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -14,18 +16,75 @@ import (
 var (
 	activeAuthID string
 	activeAuthMu sync.RWMutex
+	// activeAuthLoaded tracks whether the state file has been read. The
+	// selection is lazy-loaded (not in init) because host calls are only
+	// available after cliproxy_plugin_init — file read needs no host.
+	activeAuthLoaded bool
 )
+
+// activeAuthStatePath is the on-disk selection backing file. Written on every
+// selection change so a service restart restores the panel-selected account
+// instead of falling back to the first card. Best-effort: IO errors are
+// ignored. Var (not const) so tests can point it at a temp dir.
+var activeAuthStatePath = "/root/cliproxyapi/data/workbuddy-active-auth"
 
 func getActiveAuthID() string {
 	activeAuthMu.RLock()
-	defer activeAuthMu.RUnlock()
-	return strings.TrimSpace(activeAuthID)
+	id, loaded := activeAuthID, activeAuthLoaded
+	activeAuthMu.RUnlock()
+	if strings.TrimSpace(id) == "" && !loaded {
+		loadActiveAuthID()
+		activeAuthMu.RLock()
+		defer activeAuthMu.RUnlock()
+		return strings.TrimSpace(activeAuthID)
+	}
+	return strings.TrimSpace(id)
 }
 
 func setActiveAuthID(id string) {
 	id = strings.TrimSpace(id)
 	activeAuthMu.Lock()
 	activeAuthID = id
+	activeAuthMu.Unlock()
+	persistActiveAuthID(id)
+}
+
+// loadActiveAuthID reads the persisted selection once per process.
+func loadActiveAuthID() {
+	activeAuthMu.Lock()
+	defer activeAuthMu.Unlock()
+	activeAuthLoaded = true
+	if strings.TrimSpace(activeAuthID) != "" || activeAuthStatePath == "" {
+		return
+	}
+	b, err := os.ReadFile(activeAuthStatePath)
+	if err != nil {
+		return
+	}
+	// Validity (still a live, usable account) is checked by the callers
+	// (ensureDefaultActiveAuth/pickActiveAuth) against the host auth list —
+	// a stale ID simply falls through to first-usable there.
+	activeAuthID = strings.TrimSpace(string(b))
+}
+
+// persistActiveAuthID writes (or clears, when id == "") the selection.
+func persistActiveAuthID(id string) {
+	if activeAuthStatePath == "" {
+		return
+	}
+	if id == "" {
+		_ = os.Remove(activeAuthStatePath)
+		return
+	}
+	_ = os.MkdirAll(filepath.Dir(activeAuthStatePath), 0o700)
+	_ = os.WriteFile(activeAuthStatePath, []byte(id+"\n"), 0o600)
+}
+
+// resetActiveAuthState clears memory + loaded flag (tests only).
+func resetActiveAuthState() {
+	activeAuthMu.Lock()
+	activeAuthID = ""
+	activeAuthLoaded = false
 	activeAuthMu.Unlock()
 }
 
@@ -38,6 +97,11 @@ func clearActiveAuthIfMatch(id string) {
 	activeAuthMu.Lock()
 	if activeAuthID == id {
 		activeAuthID = ""
+		// Drop the persisted selection under the same lock so a concurrent
+		// setActiveAuthID (which writes after) can't be undone by this remove.
+		if activeAuthStatePath != "" {
+			_ = os.Remove(activeAuthStatePath)
+		}
 	}
 	activeAuthMu.Unlock()
 }

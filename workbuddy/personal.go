@@ -1,6 +1,6 @@
 // personal.go implements the personal-edition (个人版) support ported from
 // upstream (Sliverkiss/cpa-plugin origin/main): daily check-in for CN
-// accounts (09:00/21:00 auto scheduler + manual /checkin), expert trial-pack
+// accounts (once daily at a random time in 09:00~10:00 + manual /checkin), expert trial-pack
 // claim for Global accounts (/trial), personal resource-package credits, and
 // the check-in panel state.
 //
@@ -22,6 +22,7 @@ package main
 
 import (
 	"encoding/json"
+	"hash/fnv"
 	"strings"
 	"sync"
 	"time"
@@ -29,8 +30,81 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
 
-// check-in schedule: 09:00 and 21:00 local time (upstream parity).
-var checkinHours = []int{9, 21}
+// Personal auto check-in runs once daily at a random time inside the
+// 09:00~10:00 local window. The day's target is derived deterministically
+// from the date (FNV hash → second offset), so restarts on the same day keep
+// the same target: no double check-in, while the time still varies
+// unpredictably day to day.
+const (
+	checkinWindowStartHour = 9
+	checkinWindowMinutes   = 60
+)
+
+// checkinScheduleLabel is surfaced in the dashboard for the panel.
+const checkinScheduleLabel = "09:00~10:00（每日随机）"
+
+var (
+	lastCheckinTickDayMu sync.Mutex
+	lastCheckinTickDay   string // "2006-01-02" of the last scheduler tick inside the window
+)
+
+// personalCheckinWindow returns today's [09:00, 10:00) local window.
+func personalCheckinWindow(now time.Time) (start, end time.Time) {
+	start = time.Date(now.Year(), now.Month(), now.Day(), checkinWindowStartHour, 0, 0, 0, now.Location())
+	return start, start.Add(time.Duration(checkinWindowMinutes) * time.Minute)
+}
+
+// personalCheckinOffset returns the deterministic per-day offset in [0, 60min)
+// from the date hash.
+func personalCheckinOffset(day time.Time) time.Duration {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(day.Format("2006-01-02")))
+	return time.Duration(h.Sum32()%3600) * time.Second
+}
+
+// personalCheckinTarget returns the day's random target time (09:00 + offset).
+func personalCheckinTarget(day time.Time) time.Time {
+	start, _ := personalCheckinWindow(day)
+	return start.Add(personalCheckinOffset(day))
+}
+
+// inPersonalCheckinWindow reports whether now falls in today's window.
+func inPersonalCheckinWindow(now time.Time) bool {
+	start, end := personalCheckinWindow(now)
+	return !now.Before(start) && now.Before(end)
+}
+
+// markPersonalCheckinTick records that the scheduler fired inside today's
+// window (regardless of outcome) so the next tick waits for tomorrow.
+func markPersonalCheckinTick(now time.Time) {
+	lastCheckinTickDayMu.Lock()
+	lastCheckinTickDay = now.Format("2006-01-02")
+	lastCheckinTickDayMu.Unlock()
+}
+
+func personalCheckinTickedToday(now time.Time) bool {
+	lastCheckinTickDayMu.Lock()
+	defer lastCheckinTickDayMu.Unlock()
+	return lastCheckinTickDay == now.Format("2006-01-02")
+}
+
+// nextPersonalCheckinTime returns the next scheduler wake-up for the personal
+// tick: today's random target if still ahead, ASAP when inside the window
+// with no tick yet (covers restarts), otherwise tomorrow's target.
+// runAutoCheckin itself skips already-checked-in accounts, so ASAP firing is
+// idempotent-safe.
+func nextPersonalCheckinTime(now time.Time) time.Time {
+	if personalCheckinTickedToday(now) {
+		return personalCheckinTarget(now.Add(24 * time.Hour))
+	}
+	if target := personalCheckinTarget(now); target.After(now) {
+		return target
+	}
+	if inPersonalCheckinWindow(now) {
+		return now
+	}
+	return personalCheckinTarget(now.Add(24 * time.Hour))
+}
 
 // checkinAuto gates the daily auto check-in. Default true; configurable via
 // plugin config key "checkin_auto".
@@ -438,33 +512,8 @@ func mergeCheckinCache(authID string, ci *checkinSummary) {
 // Auto check-in scheduler tick (personal CN only)
 // -----------------------------------------------------------------------------
 
-// scheduledInCurrentHour reports whether now falls in [h:00, h+1:00) for any h.
-func scheduledInCurrentHour(now time.Time, hours []int) bool {
-	for _, h := range hours {
-		start := time.Date(now.Year(), now.Month(), now.Day(), h, 0, 0, 0, now.Location())
-		if !now.Before(start) && now.Before(start.Add(time.Hour)) {
-			return true
-		}
-	}
-	return false
-}
-
-// nextPersonalCheckinTime returns the next 09:00/21:00 slot.
-func nextPersonalCheckinTime(now time.Time) time.Time {
-	var earliest time.Time
-	for _, h := range checkinHours {
-		t := time.Date(now.Year(), now.Month(), now.Day(), h, 0, 0, 0, now.Location())
-		if !t.After(now) {
-			t = t.Add(24 * time.Hour)
-		}
-		if earliest.IsZero() || t.Before(earliest) {
-			earliest = t
-		}
-	}
-	return earliest
-}
-
-// runAutoCheckin is the scheduled personal tick (09:00/21:00).
+// runAutoCheckin is the scheduled personal tick (once daily, random time in
+// 09:00~10:00; see nextPersonalCheckinTime).
 // Enterprise accounts are skipped for check-in (lifecycle still applies);
 // Global personal accounts get lifecycle only (trial is manual one-shot).
 func runAutoCheckin() {

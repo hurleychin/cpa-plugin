@@ -85,7 +85,7 @@ const (
 	// pluginDisplayName is the human-facing name surfaced in the management
 	// UI and plugin store. It is intentionally different from providerName
 	// (the internal identifier) so auth files / management routes stay stable.
-	pluginDisplayName = "WorkBuddy Enterprise"
+	pluginDisplayName = "WorkBuddy"
 	authFileName      = "workbuddy.json"
 	pluginLogoURL     = "https://raw.githubusercontent.com/DGZSbot/ai-icon/refs/heads/main/WorkBuddy.png"
 	// CN chat/auth gateway (iss = codebuddy.cn realm).
@@ -354,7 +354,7 @@ func wbRegistration() registration {
 			GitHubRepository: "https://github.com/hurleychin/cpa-plugin",
 			Logo:             pluginLogoURL,
 			ConfigFields: []pluginapi.ConfigField{
-				{Name: "checkin_auto", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable daily auto check-in at 09:00 and 21:00 local time for personal CN accounts (default true). Enterprise accounts are unaffected."},
+				{Name: "checkin_auto", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable daily auto check-in at a random time between 09:00 and 10:00 local time for personal CN accounts (default true). Enterprise accounts are unaffected."},
 				{Name: "lifecycle_auto", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Auto disable CN / delete Global when enterprise quota exhausted; re-enable when the monthly cycle resets quota (default true)."},
 				{Name: "token_keepalive", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable daily access-token refresh at 22:00 local time to prevent Keycloak offline-session expiry (default true)."},
 				{Name: "models", Type: pluginapi.ConfigFieldTypeArray, Description: "Optional model list. Each item can have id, name, alias, context, max_tokens, enabled, reasoning."},

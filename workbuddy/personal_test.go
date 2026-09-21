@@ -104,24 +104,51 @@ func TestHasTrialPack_Markers(t *testing.T) {
 	}
 }
 
-// TestCheckinSchedule_Hours verifies the personal 09:00/21:00 tick helpers.
-func TestCheckinSchedule_Hours(t *testing.T) {
-	if len(checkinHours) != 2 || checkinHours[0] != 9 || checkinHours[1] != 21 {
-		t.Fatalf("checkinHours = %v, want [9 21]", checkinHours)
-	}
+// TestCheckinSchedule_Window verifies the personal daily random window:
+// once per day inside 09:00~10:00 local, deterministic per-day target.
+func TestCheckinSchedule_Window(t *testing.T) {
 	if !checkinAutoEnabled() {
 		t.Fatal("checkin_auto should default true")
 	}
-	// Next slot from 08:00 local should be 09:00 today.
-	now := time.Date(2026, 8, 10, 8, 0, 0, 0, time.Local)
-	next := nextPersonalCheckinTime(now)
-	if next.Hour() != 9 || !next.After(now) {
-		t.Fatalf("next checkin from 08:00 = %v, want 09:00 today", next)
+	loc := time.Local
+	// Window boundaries.
+	if !inPersonalCheckinWindow(time.Date(2026, 8, 10, 9, 30, 0, 0, loc)) {
+		t.Fatal("09:30 should be in checkin window")
 	}
-	if !scheduledInCurrentHour(time.Date(2026, 8, 10, 9, 30, 0, 0, time.Local), checkinHours) {
-		t.Fatal("09:30 should be in checkin hour")
+	if inPersonalCheckinWindow(time.Date(2026, 8, 10, 8, 59, 0, 0, loc)) {
+		t.Fatal("08:59 should not be in checkin window")
 	}
-	if scheduledInCurrentHour(time.Date(2026, 8, 10, 10, 30, 0, 0, time.Local), checkinHours) {
-		t.Fatal("10:30 should not be in checkin hour")
+	if inPersonalCheckinWindow(time.Date(2026, 8, 10, 10, 0, 0, 0, loc)) {
+		t.Fatal("10:00 should not be in checkin window")
+	}
+	// Target lies inside the window and is stable for the same day.
+	day := time.Date(2026, 8, 10, 0, 0, 0, 0, loc)
+	t1, t2 := personalCheckinTarget(day), personalCheckinTarget(day)
+	if !t1.Equal(t2) {
+		t.Fatal("daily target should be deterministic per day")
+	}
+	start, end := personalCheckinWindow(day)
+	if t1.Before(start) || !t1.Before(end) {
+		t.Fatalf("target %v outside window [%v, %v)", t1, start, end)
+	}
+	// Different days (very likely) differ.
+	if personalCheckinTarget(day).Equal(personalCheckinTarget(day.Add(24*time.Hour))) &&
+		personalCheckinTarget(day).Equal(personalCheckinTarget(day.Add(48*time.Hour))) {
+		t.Fatal("targets should vary across days")
+	}
+	// Before today's target → wake at target.
+	now := start.Add(-time.Hour)
+	if next := nextPersonalCheckinTime(now); !next.Equal(personalCheckinTarget(now)) {
+		t.Fatalf("pre-window next = %v, want target %v", next, personalCheckinTarget(now))
+	}
+	// After tick recorded → tomorrow's target.
+	markPersonalCheckinTick(now)
+	defer func() {
+		lastCheckinTickDayMu.Lock()
+		lastCheckinTickDay = ""
+		lastCheckinTickDayMu.Unlock()
+	}()
+	if next := nextPersonalCheckinTime(now); !next.Equal(personalCheckinTarget(now.Add(24 * time.Hour))) {
+		t.Fatalf("post-tick next = %v, want tomorrow target", next)
 	}
 }

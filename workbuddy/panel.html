@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WorkBuddy Enterprise 面板</title>
+<title>WorkBuddy 面板</title>
 <style>
 /* Theme tokens aligned with CPA management panel (key-policy / themes.scss):
    default :root = light (paper); data-theme=white | dark; embedded iframe syncs parent. */
@@ -171,8 +171,8 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
 </head>
 <body>
 <div class="wrap">
-  <h1>WorkBuddy Enterprise 账号面板</h1>
-  <div class="sub">企业版额度 · 个人版积分 · CN 每日签到（09:00/21:00）· Global 专家包领取 · 耗尽自动关/删</div>
+  <h1>WorkBuddy 账号面板</h1>
+  <div class="sub">企业版额度 · 个人版积分 · CN 每日签到（09:00~10:00随机）· Global 专家包领取 · 耗尽自动关/删</div>
   <div id="authBox" class="card" style="display:none;margin-bottom:16px">
     <div style="margin-bottom:8px;color:var(--mut)">需要管理密钥（management key）才能访问账号数据。从 CPA 主面板嵌入时会自动获取，无需输入。错误密钥请勿连点，避免 IP 封禁。</div>
     <div style="display:flex;gap:8px">
@@ -185,7 +185,7 @@ button .spin{border-color:var(--on-acc);border-top-color:transparent}
     <button id="refreshBtn" onclick="load(true,this)">刷新数据</button>
     <button class="sec" onclick="checkinAll(this)" title="仅个人版 CN 账号">全部签到</button>
     <button class="sec" onclick="claimTrialAll(this)" title="仅个人版 Global · 一次性">全部领取</button>
-    <label class="toggle" title="仅个人版 CN 账号 09:00 / 21:00"><input type="checkbox" id="autoToggle" onchange="toggleAuto(this.checked)"> 自动签到(CN)</label>
+    <label class="toggle" title="仅个人版 CN 账号 09:00~10:00随机"><input type="checkbox" id="autoToggle" onchange="toggleAuto(this.checked)"> 自动签到(CN)</label>
     <span class="toggle" id="svtime"></span>
   </div>
   <div class="filter-bar" id="filterBar">
@@ -630,9 +630,9 @@ async function load(force, btn){
     if(autoT&&d.checkin_auto!=null) autoT.checked=!!d.checkin_auto;
     updateFilterCounts(accounts);
     if(!accounts.length){
-      g.innerHTML='<div class="loading">暂无 WorkBuddy Enterprise 账号</div>';
+      g.innerHTML='<div class="loading">暂无 WorkBuddy 账号</div>';
       renderSummary([]);
-      if(force) toast("数据已刷新", "warn", "暂无 WorkBuddy Enterprise 账号");
+      if(force) toast("数据已刷新", "warn", "暂无 WorkBuddy 账号");
       return;
     }
     g.innerHTML=accounts.map(card).join("");
