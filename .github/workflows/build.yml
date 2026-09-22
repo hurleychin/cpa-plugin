@@ -233,7 +233,14 @@ jobs:
               git push origin "${TAG}"
             fi
           fi
+          # Release notes default to the tagged commit's message so the
+          # release page mirrors the git log. Fall back to the generic
+          # one-liner when the log is empty (e.g. shallow checkout).
+          NOTES="$(git log -1 --format=%B 2>/dev/null || true)"
+          if [[ -z "${NOTES// }" ]]; then
+            NOTES="${PLUGIN} CPA plugin v${VERSION} - Linux amd64 build for CLIProxyAPI plugin store"
+          fi
           gh release create "${TAG}" out/${PLUGIN}_${VERSION}_linux_amd64.zip out/checksums.txt \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${PLUGIN} v${VERSION}" \
-            --notes "${PLUGIN} CPA plugin v${VERSION} - Linux amd64 build for CLIProxyAPI plugin store"
+            --notes "${NOTES}"
