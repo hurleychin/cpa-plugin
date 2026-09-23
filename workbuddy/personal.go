@@ -22,6 +22,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"hash/fnv"
 	"strings"
 	"sync"
@@ -182,14 +183,26 @@ func acquireUserResourceSlot() func() {
 func fetchCheckinStatus(sa *storedAuth) (*checkinSummary, error) {
 	var data json.RawMessage
 	var lastErr error
-	for _, path := range []string{"/v2/billing/meter/checkin-activity-status", "/v2/billing/meter/checkin-status"} {
+	for idx, path := range []string{"/v2/billing/meter/checkin-activity-status", "/v2/billing/meter/checkin-status"} {
 		d, err := billingCall(sa, path, nil)
-		if err == nil {
-			data = d
-			lastErr = nil
-			break
+		if err != nil {
+			lastErr = err
+			continue
 		}
-		lastErr = err
+		if idx > 0 && isCheckinStubPayload(d) {
+			// The fallback endpoint answers code=0 with an all-zero stub
+			// (active=false, no dates/activity) even for accounts with a
+			// live activity (verified against production). Accepting it
+			// would clobber a good cached today_checked_in=true with false
+			// — and at tick time skip the day's check-in entirely (the tick
+			// is marked regardless of outcome). Treat as failure so every
+			// caller keeps last-known-good state instead.
+			lastErr = fmt.Errorf("checkin-status returned empty stub")
+			continue
+		}
+		data = d
+		lastErr = nil
+		break
 	}
 	if lastErr != nil {
 		return nil, lastErr
@@ -223,6 +236,43 @@ func fetchCheckinStatus(sa *storedAuth) (*checkinSummary, error) {
 		}
 	}
 	return sum, nil
+}
+
+// isCheckinStubPayload reports whether a check-in status payload is the
+// zero-value stub the fallback checkin-status endpoint returns: nothing set
+// (no active flag, no today flag, zero counters, no activity name, no dates).
+// Only applied to the fallback result — the primary endpoint's shape is
+// accepted verbatim so genuine end-of-activity responses keep working.
+func isCheckinStubPayload(data json.RawMessage) bool {
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return true
+	}
+	if jsonBool(m, "active", "Active") || jsonBool(m, "today_checked_in", "todayCheckedIn") {
+		return false
+	}
+	for _, keys := range [][2]string{
+		{"streak_days", "streakDays"},
+		{"daily_credit", "dailyCredit"},
+		{"today_credit", "todayCredit"},
+		{"total_credits", "totalCredits"},
+		{"week_checkin_days", "weekCheckinDays"},
+		{"season", "season"},
+	} {
+		if jsonI64(m, keys[0], keys[1]) != 0 {
+			return false
+		}
+	}
+	if s := jsonStr(m, "activity_name", "activityName"); strings.TrimSpace(s) != "" {
+		return false
+	}
+	if dates, ok := m["checkin_dates"].([]any); ok && len(dates) > 0 {
+		return false
+	}
+	if dates, ok := m["checkinDates"].([]any); ok && len(dates) > 0 {
+		return false
+	}
+	return true
 }
 
 // packageRemainUsed picks current-cycle remain/used/size for one package.

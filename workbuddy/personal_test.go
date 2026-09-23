@@ -152,3 +152,92 @@ func TestCheckinSchedule_Window(t *testing.T) {
 		t.Fatalf("post-tick next = %v, want tomorrow target", next)
 	}
 }
+
+// TestFetchCheckinStatus_RejectsFallbackStub verifies the reported bug: when
+// the primary checkin-activity-status endpoint fails transiently, the
+// fallback checkin-status endpoint answers code=0 with an all-zero stub.
+// Accepting it would clobber a good cached today_checked_in=true with false.
+// The stub must surface as an error so callers keep last-known-good state.
+func TestFetchCheckinStatus_RejectsFallbackStub(t *testing.T) {
+	stub := `{"code":0,"msg":"OK","data":{"active":false,"today_checked_in":false,"streak_days":0,"daily_credit":0,"today_credit":0,"total_credits":0,"week_checkin_days":0,"season":0,"activity_name":"","checkin_dates":null}}`
+	var sawFallback bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v2/billing/meter/checkin-activity-status":
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("upstream blip"))
+			return
+		case "/v2/billing/meter/checkin-status":
+			sawFallback = true
+			_, _ = w.Write([]byte(stub))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	restore := setBillingBase(srv.URL)
+	defer restore()
+
+	sa := &storedAuth{
+		Auth:    storedTokens{AccessToken: "tok", Domain: "www.codebuddy.cn"},
+		Account: storedAccount{UID: "u1"},
+	}
+	if _, err := fetchCheckinStatus(sa); err == nil {
+		t.Fatal("fallback stub must be rejected as an error, not accepted")
+	}
+	if !sawFallback {
+		t.Fatal("fallback endpoint should have been tried after primary failure")
+	}
+}
+
+// TestFetchCheckinStatus_FallbackRealDataAccepted ensures a non-stub fallback
+// response is still accepted when the primary is down (fallback path itself
+// is kept, only the zero-stub is rejected).
+func TestFetchCheckinStatus_FallbackRealDataAccepted(t *testing.T) {
+	real := `{"code":0,"msg":"OK","data":{"active":true,"today_checked_in":true,"streak_days":2,"checkin_dates":["2026-09-22"],"activity_name":"高校新生攻略"}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v2/billing/meter/checkin-activity-status" {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte("upstream blip"))
+			return
+		}
+		_, _ = w.Write([]byte(real))
+	}))
+	defer srv.Close()
+
+	restore := setBillingBase(srv.URL)
+	defer restore()
+
+	sa := &storedAuth{
+		Auth:    storedTokens{AccessToken: "tok", Domain: "www.codebuddy.cn"},
+		Account: storedAccount{UID: "u1"},
+	}
+	sum, err := fetchCheckinStatus(sa)
+	if err != nil {
+		t.Fatalf("real fallback data should be accepted: %v", err)
+	}
+	if !sum.TodayCheckedIn || !sum.Active {
+		t.Fatalf("unexpected summary: %+v", sum)
+	}
+}
+
+// TestIsCheckinStubPayload_Shape checks the stub detector against the exact
+// production stub shape and a real activity response.
+func TestIsCheckinStubPayload_Shape(t *testing.T) {
+	stub := `{"active":false,"today_checked_in":false,"streak_days":0,"daily_credit":0,"today_credit":0,"total_credits":0,"week_checkin_days":0,"season":0,"activity_name":"","checkin_dates":null}`
+	if !isCheckinStubPayload([]byte(stub)) {
+		t.Fatal("production stub shape must be detected")
+	}
+	real := `{"active":true,"today_checked_in":true,"streak_days":2,"checkin_dates":["2026-09-22"],"activity_name":"高校新生攻略"}`
+	if isCheckinStubPayload([]byte(real)) {
+		t.Fatal("real activity response must not be flagged as stub")
+	}
+	// Genuine end-of-activity via primary is accepted verbatim (not our call
+	// to judge here) — detector is only consulted for fallback results.
+	if isCheckinStubPayload([]byte(`{"active":true,"today_checked_in":false}`)) {
+		t.Fatal("active=false/today=false with activity flag must not be stub")
+	}
+}
