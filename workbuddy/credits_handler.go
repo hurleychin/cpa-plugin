@@ -117,6 +117,29 @@ func handleSelectAuth(req pluginapi.ManagementRequest) map[string]any {
 
 // handleCreditsQuery returns real-time credits (enterprise quota) for one or
 // all accounts. Pass ?auth_index=<idx> to query a single account; omit for all.
+// resolveCreditsCheckin returns the check-in snapshot for a single-account
+// credits response: a fresh fetch for personal CN accounts, falling back to
+// the cached snapshot on fetch error (or when no fetch applies, e.g.
+// enterprise/Global) — may be nil.
+//
+// Background: the dashboard's light /accounts path never hits upstream and
+// stale cache entries are pruned (>4×TTL), so without a fresh fetch here the
+// checkin snapshot evaporates minutes after the morning tick and the panel
+// never shows 已签到.
+func resolveCreditsCheckin(authID string, sa *storedAuth) *checkinSummary {
+	if shouldFetchCheckin(sa) {
+		if c, err := fetchCheckinStatus(sa); err == nil {
+			return c
+		}
+	}
+	if v, ok := accountCache.Load(authID); ok {
+		if e, ok2 := v.(*accountCacheEntry); ok2 {
+			return e.checkin
+		}
+	}
+	return nil
+}
+
 // Single-account mode returns full account info (nickname, region, credits,
 // exhausted) so the panel can update one card without reloading the dashboard.
 func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
@@ -160,30 +183,31 @@ func handleCreditsQuery(req pluginapi.ManagementRequest) map[string]any {
 				// Also fetch plan so the badge updates on lazy load.
 				acct["plan"] = fetchPaymentType(sa)
 				if !isEnterpriseAccount(sa) {
-					if v, ok := accountCache.Load(f.ID); ok {
-						if e, ok2 := v.(*accountCacheEntry); ok2 && e.checkin != nil {
-							acct["checkin"] = e.checkin
-						}
+					if ci := resolveCreditsCheckin(f.ID, sa); ci != nil {
+						acct["checkin"] = ci
 					}
 					if isGlobalDomain(sa.Auth.Domain) {
 						acct["trial_claimed"] = hasTrialPack(cr)
 					}
 				}
 				// Update cache so subsequent dashboard loads see fresh data.
-				// Merge: keep the checkin snapshot (credits query doesn't refetch it).
+				// Merge: keep the checkin snapshot when this query didn't
+				// fetch a fresh one (enterprise/Global never refetch it).
 				now := time.Now()
 				if cr != nil {
 					cr.FetchedAt = now.UTC().Format(time.RFC3339)
 				}
 				plan, _ := acct["plan"].(string)
-				var prevCI *checkinSummary
-				if v, ok := accountCache.Load(f.ID); ok {
-					if e, ok2 := v.(*accountCacheEntry); ok2 {
-						prevCI = e.checkin
+				ci, _ := acct["checkin"].(*checkinSummary)
+				if ci == nil {
+					if v, ok := accountCache.Load(f.ID); ok {
+						if e, ok2 := v.(*accountCacheEntry); ok2 {
+							ci = e.checkin
+						}
 					}
 				}
 				accountCache.Store(f.ID, &accountCacheEntry{
-					checkin: prevCI, credits: cr, plan: plan, fetched: now,
+					checkin: ci, credits: cr, plan: plan, fetched: now,
 				})
 			}
 			return map[string]any{"accounts": []map[string]any{acct}}
