@@ -326,7 +326,7 @@ function modelsHTML(a){
     const badges=(pm[m.id]||[]).map(p=>`<span class="badge pbadge" data-tip="${esc(promoTip(p))}" title="${esc(promoTip(p))}" style="${p.color?`background:${esc(p.color)}22;color:${esc(p.color)};border-color:${esc(p.color)}55`:""}">${esc(p.badge||"优惠")}</span>`).join("");
     const caps=[m.supports_tool_call?"🔧":"",m.supports_images?"🖼":""].join("");
     const rate=m.rate?`<span title="积分倍率" style="color:var(--acc);font-weight:700">${esc(m.rate)}</span>`:"";
-    return `<div class="p"><span title="${esc(m.desc||m.id)}">${esc(m.name||m.id)}${caps?` <span style="opacity:.7">${caps}</span>`:""}</span><span style="display:flex;gap:6px;align-items:center">${badges}<span class="uid" style="margin:0">${esc(m.id)}</span>${rate}</span></div>`;
+    return `<div class="p"><span title="${esc(m.desc||m.id)}">${esc(m.id)}${caps?` <span style="opacity:.7">${caps}</span>`:""}</span><span style="display:flex;gap:6px;align-items:center">${badges}${rate}</span></div>`;
   }).join("");
   return `<details class="pkgs models-lazy" data-auth="${esc(a.auth_index)}"${a._models_open?" open":""}><summary style="cursor:pointer">可用模型（${a.models.length}）</summary>${rows}</details>`;
 }
