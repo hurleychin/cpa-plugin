@@ -51,10 +51,14 @@ button{background:var(--acc);color:var(--on-acc);border:0;border-radius:8px;padd
 button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background:var(--btn-sec-hover)}button:disabled{opacity:.5;cursor:default}
 .toggle{display:flex;gap:8px;align-items:center;color:var(--mut);font-size:13px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(460px,1fr));gap:14px}
+/* 手机窄屏：单列铺满，与汇总区同宽（桌面端保持一行两个不变） */
+@media (max-width:520px){
+.grid{grid-template-columns:1fr}
+}
 .card,.summary{background:var(--card);border:1px solid var(--border);border-radius:12px}
-.card{padding:16px}
+.card{padding:16px;min-width:0;overflow:hidden}
 .card.selected{border-color:var(--acc);box-shadow:0 0 0 2px var(--acc-ring)}
-.card h2{font-size:15px;margin:0 0 2px;display:flex;justify-content:space-between;align-items:center}
+.card h2{font-size:15px;margin:0 0 2px;display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap}
 .uid{color:var(--mut);font-size:11px;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:12px}
 .badge{font-size:11px;font-weight:600;padding:3px 10px;border-radius:99px;background:var(--ok-soft);color:var(--ok);border:1px solid var(--ok-border)}
 .badge.exhausted{background:var(--err-soft);color:var(--err);border:1px solid var(--err-border)}
@@ -87,13 +91,16 @@ button.sec{background:var(--btn-sec);color:var(--fg)}button.sec:hover{background
 .row:first-of-type{border-top:0}.k{color:var(--mut)}.v{font-weight:600}
 .v.ok{color:var(--ok)}.v.warn{color:var(--warn)}.v.err{color:var(--err)}
 .pkgs{margin-top:10px;font-size:12px;color:var(--mut)}
-.pkgs .p{display:flex;justify-content:space-between;padding:4px 0;border-top:1px solid var(--border)}
+.pkgs .p{display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-top:1px solid var(--border)}
+.pkgs .p>*{min-width:0}
+.pkgs .p .uid{min-width:0}
+.pkgs .p>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pb{margin-top:10px}
 .pb-label{display:flex;justify-content:space-between;font-size:12px;color:var(--mut);margin-bottom:6px}
 .pb-track{height:8px;background:var(--surface-muted);border-radius:99px;overflow:hidden}
 .pb-bar{height:100%;background:var(--ok);border-radius:99px;transition:width .6s ease}
 .pb-meta{font-size:11px;color:var(--mut);margin-top:6px}
-.actions{margin-top:12px;display:flex;gap:8px}
+.actions{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
 .field-input{flex:1;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--fg)}
 /* 右上角滑入通知栈 */
 .toasts{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:10px;z-index:9999;max-width:360px}
